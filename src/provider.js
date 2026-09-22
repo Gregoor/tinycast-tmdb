@@ -6,9 +6,12 @@
 // launch and an index file only when its recorded hash changed, so a launch costs one small request
 // and a day's update costs only that day's delta.
 //
-// A root-search provider may open a URL but not fetch, so the download goes through curl via the
-// process shim. That, plus the resident-session runtime, makes this Tinycast-only: it is not a Raycast
-// extension and must stay out of the Raycast store and any registry catalog.
+// A provider's API surface is restricted to `rootSearch.*` + `open`, but the Node builtins are
+// provided to every bundle by design — so the index is downloaded with curl through the process shim.
+// That streams straight to disk, which the fetch path cannot: its polyfill is refused by the provider
+// bridge, and a bare `fetch` only works where JavaScriptCore supplies a native one, buffering the
+// whole body in memory. That, plus the resident-session runtime, makes this Tinycast-only: it is not a
+// Raycast extension and must stay out of the Raycast store and any registry catalog.
 //
 // The provider's `@tinycast/api` module exposes only `registerRootSearchProvider` and `open`, so the
 // cache directory is derived from the home directory rather than `environment.supportPath`.

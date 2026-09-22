@@ -78,20 +78,22 @@ of the same mechanism.
 
 ## The provider's environment
 
-A root-search provider runs sandboxed. In the live runtime it can:
+A root-search provider is restricted at the **API** level, not the module level: its `@tinycast/api` is
+only `{registerRootSearchProvider, open}`, but the Node builtins are provided to every bundle by
+design.
 
 | Available | Not available |
 |---|---|
-| `fs`, `crypto`, `zlib`, `os`, `proc` (via the node shims) | `environment` (the provider's `@tinycast/api` module is `{registerRootSearchProvider, open}`) |
-| `registerRootSearchProvider`, `open` | Any store/registry surface |
+| `fs`, `proc`, `crypto`, `zlib`, `os` (Node builtins) | `environment` (so the cache path is derived from `os.homedir()`) |
+| `registerRootSearchProvider`, `open` | the rest of the API surface — storage, clipboard, `fetch` |
 
-Its fetch path is unreliable by design: the runtime's own fetch polyfill is refused by the provider
-bridge (*"providers may only open a URL"*), and the only reason a bare `fetch` works today is that
-this macOS's JavaScriptCore supplies a native one, so the polyfill never installs. That is a platform
-accident, not a contract — and it buffers a body in memory, which a 140 MB index must not do. So the
-download goes through **curl** via the process shim, streaming straight to disk. The cache therefore
-lives at `~/Library/Caches/tinycast-root-search/movies`, derived from the home directory rather than
-`environment.supportPath`.
+So the index is downloaded with **curl through the process shim**, streaming straight to disk. The
+fetch path can't do that: the runtime's fetch polyfill is refused by the provider bridge, and a bare
+`fetch` only works where JavaScriptCore supplies a native one — which buffers the whole body in
+memory, the last thing a 140 MB index needs.
+
+The transport is isolated in one `download(url, path)` function, so swapping it (say, for a future
+host-side sync) touches nothing in the sync, format or merge logic.
 
 ## The index format (`src/db/index-format.mjs`)
 
