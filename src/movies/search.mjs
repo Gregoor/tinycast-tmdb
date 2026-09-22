@@ -51,6 +51,7 @@ export async function searchMovies(index, query, { limit = 10, candidatePool = 2
     voteCount: rec.voteCount,
     // Deterministic TMDB poster URL (w92 thumb), derived from the stored poster_path.
     posterURL: posters[idx] ? `https://image.tmdb.org/t/p/w92${posters[idx]}` : null,
+    mediaType: rec.mediaType === 1 ? "tv" : "movie",
     score,
     row,
   }));

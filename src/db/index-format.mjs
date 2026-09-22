@@ -4,10 +4,10 @@
 // JS-standard-only — it ships inside the extension bundle and runs in a bare JavaScriptCore context.
 
 export const MAGIC = "TCIDX001";
-export const VERSION = 2;
+export const VERSION = 3;
 
 export const HEADER_BYTES = 112;
-export const ROW_RECORD_BYTES = 36;
+export const ROW_RECORD_BYTES = 37;
 
 // Physical section order (byte offsets live in the header as u64s):
 //   [0] header          HEADER_BYTES fixed
@@ -21,10 +21,10 @@ export const ROW_RECORD_BYTES = 36;
 //   [8] originalPool    originalPoolBytes of UTF-8
 //   [9] posterPool      posterPoolBytes of UTF-8
 //
-// Row record (36 bytes), indexed by row (postings reference row indices):
+// Row record (37 bytes), indexed by row (postings reference row indices):
 //   u32 tmdbID | u32 titleOffset | u16 titleLength | u32 originalOffset | u16 originalLength |
 //   u16 year (0 unknown) | u32 imdbNum (0 = absent; else the `tt\d+` numeric part) | f32 popularity |
-//   u32 voteCount | u32 posterOffset | u16 posterLength
+//   u32 voteCount | u32 posterOffset | u16 posterLength | u8 mediaType (0 = movie, 1 = tv)
 //
 // The imdb id is stored as the numeric part of `tt{N}` because it is always well-formed or absent in
 // the dataset (Orphan "None" strings are dropped at import). Display subtitle = `${year}` greyed;
@@ -50,6 +50,7 @@ export const ROW_LAYOUT = Object.freeze({
   VOTE_COUNT: [26, 4],
   POSTER_OFFSET: [30, 4],
   POSTER_LENGTH: [34, 2],
+  MEDIA_TYPE: [36, 1],
 });
 
 // u64 section offsets, [offset, byteLength].
@@ -77,6 +78,7 @@ export function encodeRow(view, at, rec) {
   view.setUint32(at + 26, rec.voteCount, true);
   view.setUint32(at + 30, rec.posterOffset, true);
   view.setUint16(at + 34, rec.posterLength, true);
+  view.setUint8(at + 36, rec.mediaType, true);
 }
 
 /// Decode one row record from a DataView at byte offset `at`.
@@ -93,6 +95,7 @@ export function decodeRow(view, at) {
     voteCount: view.getUint32(at + 26, true),
     posterOffset: view.getUint32(at + 30, true),
     posterLength: view.getUint16(at + 34, true),
+    mediaType: view.getUint8(at + 36),
   };
 }
 

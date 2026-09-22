@@ -1,0 +1,74 @@
+name: Daily index
+
+# Rebuilds the TMDB index from the day's ID export and republishes the extension. The metadata
+# store is carried across runs in the Actions cache (free — it is refetchable data, not something a
+# user would miss), so the daily job only pays for new ids, not the whole corpus.
+#
+# The first run needs the store seeded: run `npm run backfill` locally (it takes hours under TMDB's
+# rate limit) and let the restore-key pick up the cache you save, or trigger this with the
+# `backfill-limit` input after seeding a partial store.
+
+on:
+  schedule:
+    # TMDB publishes the exports by ~08:00 UTC; 09:00 leaves an hour of slack.
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+    inputs:
+      backfill-limit:
+        description: "Max ids to fetch this run (blank = all missing; useful for a first seed)"
+        required: false
+        default: ""
+
+concurrency:
+  group: daily-index
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # to publish the rolling release
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - run: npm ci
+
+      - name: Restore metadata store
+        uses: actions/cache/restore@v4
+        with:
+          path: data/records.ndjson
+          key: tmdb-store-${{ github.run_id }}
+          restore-keys: tmdb-store-
+
+      - name: Download today's ID export
+        run: npm run fetch-exports
+
+      - name: Fetch metadata for new/changed ids
+        env:
+          TMDB_READ_TOKEN: ${{ secrets.TMDB_READ_TOKEN }}
+        run: |
+          if [ -n "${{ github.event.inputs.backfill-limit }}" ]; then
+            node Scripts/backfill-metadata.mjs --limit=${{ github.event.inputs.backfill-limit }}
+          else
+            npm run backfill
+          fi
+
+      - name: Build index + provider bundle
+        run: |
+          npm run build-index
+          npm run build-provider
+
+      - name: Save metadata store
+        uses: actions/cache/save@v4
+        with:
+          path: data/records.ndjson
+          key: tmdb-store-${{ github.run_id }}
+
+      - name: Publish the rolling release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node Scripts/publish.mjs

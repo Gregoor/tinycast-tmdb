@@ -10,8 +10,9 @@ import { openRuntimeReader } from "./db/runtime-reader.mjs";
 import { MovieIndex } from "./db/loader.mjs";
 import { searchMovies } from "./movies/search.mjs";
 
-// The index artifact path; AppCore builds it there (node Scripts/build-index.mjs) before launch.
-const INDEX_PATH = "/tmp/movies-full.index";
+// The index sits beside this bundle. `__dirname` is provided by Tinycast's CommonJS wrapper, so the
+// bundle and its index travel together wherever the extension is installed.
+const INDEX_PATH = `${__dirname}/tmdb.index`;
 
 let indexPromise = null;
 
@@ -31,23 +32,24 @@ export default function command() {
       const index = await ensureIndex();
       const results = await searchMovies(index, query, { limit });
       return results.map((movie) => ({
-        id: `tmdb:${movie.tmdbID}`,
+        // The id carries the media type so activation can route to the right popfeed path.
+        id: `${movie.mediaType}:${movie.tmdbID}`,
         title: movie.title,
         subtitle: movie.year != null ? String(movie.year) : undefined,
         keywords: movie.originalTitle ? [movie.originalTitle] : [],
         // Deterministic TMDB poster URL; Swift fetches + caches it by URL for icon stream-in.
         posterURL: movie.posterURL ?? undefined,
         // The row's kind label.
-        label: "Movie",
+        label: movie.mediaType === "tv" ? "TV Show" : "Movie",
       }));
     },
 
     async perform(resultId) {
-      // Activation: open the popfeed movie page for this record. This dump is the TMDB movie
-      // dataset, so every id is a movie; a future shows dump would route `tv_show/:id` instead.
-      const tmdbID = String(resultId ?? "").replace(/^tmdb:/, "");
+      // Activation: open the popfeed page for this record, routing by the id's media type.
+      const [kind, tmdbID] = String(resultId ?? "").split(":");
       if (!tmdbID) return;
-      await open(`https://popfeed.social/movie/${tmdbID}`, "Safari");
+      const path = kind === "tv" ? "tv_show" : "movie";
+      await open(`https://popfeed.social/${path}/${tmdbID}`, "Safari");
     },
   });
 
