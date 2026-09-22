@@ -76,13 +76,17 @@ if (deltaArg) {
 const bundle = assetInfo(bundlePath, "provider.bundle.js");
 const store = storeArg ? assetInfo(storeArg, "store.ndjson.gz") : prev?.store ?? null;
 
+/// The published shape: `local` is for the upload step only, never for the manifest (it would leak
+/// the build machine's paths into a public file).
+const published = (asset) => (asset ? { name: asset.name, bytes: asset.bytes, sha256: asset.sha256 } : null);
+
 const manifest = {
   version: (prev?.version ?? 0) + 1,
   generatedAt: new Date().toISOString(),
-  base,
-  deltas,
-  bundle,
-  ...(store ? { store } : {}),
+  base: published(base),
+  deltas: deltas.map(published),
+  bundle: published(bundle),
+  ...(store ? { store: published(store) } : {}),
 };
 
 // Upload first, then the manifest — so a client never sees a manifest whose assets are missing.

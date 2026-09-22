@@ -20,7 +20,7 @@ import { registerRootSearchProvider, open } from "@tinycast/api";
 import { createProviderCore, activationURL } from "./provider-core.mjs";
 
 const MANIFEST_URL =
-  "https://github.com/abue-ammar/tinycast-tmdb/releases/latest/download/manifest.json";
+  "https://github.com/Gregoor/tinycast-tmdb/releases/latest/download/manifest.json";
 
 /// A re-downloadable, hash-verified artifact belongs in Caches, not Application Support.
 const CACHE_DIR = `${require("os").homedir()}/Library/Caches/tinycast-root-search/movies`;
