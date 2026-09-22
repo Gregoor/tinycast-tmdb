@@ -22,6 +22,9 @@ if (!hasCredentials()) {
   process.exit(2);
 }
 
+// Detached runs outlive whatever was reading their log; a write to a closed pipe must not kill them.
+for (const stream of [process.stdout, process.stderr]) stream.on("error", () => {});
+
 function argValue(flag) {
   const arg = process.argv.find((a) => a.startsWith(flag));
   return arg ? arg.slice(flag.length) : undefined;

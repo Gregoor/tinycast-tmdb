@@ -13,6 +13,10 @@ if (!hasCredentials()) {
   process.exit(2);
 }
 
+// This job runs for hours, detached, and outlives whatever was reading its log. A write to a closed
+// pipe must not take the run down with it.
+for (const stream of [process.stdout, process.stderr]) stream.on("error", () => {});
+
 function argValue(flag) {
   const arg = process.argv.find((a) => a.startsWith(flag));
   return arg ? arg.slice(flag.length) : undefined;
