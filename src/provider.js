@@ -1,55 +1,51 @@
-// The Tinycast root-search provider for movies. Bundled to a single self-contained file
-// (`provider.bundle.js`) that AppCore loads into a resident JavaScriptCore session. It loads the
-// prebuilt movie index from disk and answers root queries through the `@tinycast/api` bridge.
+// The Tinycast root-search provider for TMDB movies and TV shows. Bundled to a single self-contained
+// file that AppCore loads into a resident JavaScriptCore session.
 //
-// The default export must stay "alive" (return a never-settling promise) so the resident session
-// keeps the runtime mounted across keystrokes — see RootSearchProviderHost.
+// The index is NOT committed — at ~140 MB it is past GitHub's 100 MB committed-file limit. It ships
+// as a GitHub Release asset beside a small manifest and per-day deltas; the manifest is fetched every
+// launch and an index file only when its recorded hash changed, so a launch costs one small request
+// and a day's update costs only that day's delta.
+//
+// A root-search provider may open a URL but not fetch, so the download goes through curl via the
+// process shim. That, plus the resident-session runtime, makes this Tinycast-only: it is not a Raycast
+// extension and must stay out of the Raycast store and any registry catalog.
+//
+// The provider's `@tinycast/api` module exposes only `registerRootSearchProvider` and `open`, so the
+// cache directory is derived from the home directory rather than `environment.supportPath`.
+//
+// The default export must stay "alive" (return a never-settling promise) so the resident session keeps
+// the runtime mounted across keystrokes — see RootSearchProviderHost.
 
 import { registerRootSearchProvider, open } from "@tinycast/api";
-import { openRuntimeReader } from "./db/runtime-reader.mjs";
-import { MovieIndex } from "./db/loader.mjs";
-import { searchMovies } from "./movies/search.mjs";
+import { createProviderCore, activationURL } from "./provider-core.mjs";
 
-// The index sits beside this bundle. `__dirname` is provided by Tinycast's CommonJS wrapper, so the
-// bundle and its index travel together wherever the extension is installed.
-const INDEX_PATH = `${__dirname}/tmdb.index`;
+const MANIFEST_URL =
+  "https://github.com/abue-ammar/tinycast-tmdb/releases/latest/download/manifest.json";
 
-let indexPromise = null;
+/// A re-downloadable, hash-verified artifact belongs in Caches, not Application Support.
+const CACHE_DIR = `${require("os").homedir()}/Library/Caches/tinycast-root-search/movies`;
 
-async function ensureIndex() {
-  if (!indexPromise) {
-    indexPromise = new MovieIndex({ reader: openRuntimeReader(INDEX_PATH, require("fs")) }).open();
-    indexPromise.catch(() => { indexPromise = null; });
-  }
-  return indexPromise;
+/// Fetch `url` to `path` through curl, writing beside the target and renaming so a failed or partial
+/// transfer never leaves a truncated index where the loader would open it.
+function download(url, path) {
+  const { execFileSync } = require("child_process");
+  const fs = require("fs");
+  execFileSync("/usr/bin/curl", ["-fsSL", "--retry", "3", url, "-o", `${path}.part`]);
+  fs.renameSync(`${path}.part`, path);
 }
 
 export default function command() {
+  const fs = require("fs");
+  const core = createProviderCore({
+    manifestURL: MANIFEST_URL, cacheDir: CACHE_DIR, fs, download, log: console.log,
+  });
+
   registerRootSearchProvider({
     id: "movies",
-
-    async search(query, { limit }) {
-      const index = await ensureIndex();
-      const results = await searchMovies(index, query, { limit });
-      return results.map((movie) => ({
-        // The id carries the media type so activation can route to the right popfeed path.
-        id: `${movie.mediaType}:${movie.tmdbID}`,
-        title: movie.title,
-        subtitle: movie.year != null ? String(movie.year) : undefined,
-        keywords: movie.originalTitle ? [movie.originalTitle] : [],
-        // Deterministic TMDB poster URL; Swift fetches + caches it by URL for icon stream-in.
-        posterURL: movie.posterURL ?? undefined,
-        // The row's kind label.
-        label: movie.mediaType === "tv" ? "TV Show" : "Movie",
-      }));
-    },
-
+    search: (query, { limit }) => core.search(query, limit),
     async perform(resultId) {
-      // Activation: open the popfeed page for this record, routing by the id's media type.
-      const [kind, tmdbID] = String(resultId ?? "").split(":");
-      if (!tmdbID) return;
-      const path = kind === "tv" ? "tv_show" : "movie";
-      await open(`https://popfeed.social/${path}/${tmdbID}`, "Safari");
+      const url = activationURL(resultId);
+      if (url) await open(url, "Safari");
     },
   });
 

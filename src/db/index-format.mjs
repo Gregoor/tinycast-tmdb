@@ -4,9 +4,9 @@
 // JS-standard-only — it ships inside the extension bundle and runs in a bare JavaScriptCore context.
 
 export const MAGIC = "TCIDX001";
-export const VERSION = 3;
+export const VERSION = 4;
 
-export const HEADER_BYTES = 112;
+export const HEADER_BYTES = 128;
 export const ROW_RECORD_BYTES = 37;
 
 // Physical section order (byte offsets live in the header as u64s):
@@ -20,6 +20,7 @@ export const ROW_RECORD_BYTES = 37;
 //   [7] titlePool       titlePoolBytes of UTF-8
 //   [8] originalPool    originalPoolBytes of UTF-8
 //   [9] posterPool      posterPoolBytes of UTF-8
+//   [10] superseded     supersededCount * u32 stable keys this file replaces (deltas only)
 //
 // Row record (37 bytes), indexed by row (postings reference row indices):
 //   u32 tmdbID | u32 titleOffset | u16 titleLength | u32 originalOffset | u16 originalLength |
@@ -102,7 +103,7 @@ export function decodeRow(view, at) {
 /// Serialize the whole index into one contiguous byte buffer. `rows`, `termOffsets`, `termRanges`
 /// and `postings` are TypedArrays; `termsBlob`, `titlePool`, `originalPool`, `posterPool` are
 /// Uint8Array.
-export function serializeIndex({ rows, termOffsets, termsBlob, termRanges, postings, titlePool, originalPool, posterPool }) {
+export function serializeIndex({ rows, termOffsets, termsBlob, termRanges, postings, titlePool, originalPool, posterPool, supersededKeys = new Uint32Array(0) }) {
   const termCount = termOffsets.length;
   const header = new Uint8Array(HEADER_BYTES);
   const h = new DataView(header.buffer);
@@ -114,6 +115,7 @@ export function serializeIndex({ rows, termOffsets, termsBlob, termRanges, posti
   h.setUint32(24, titlePool.length, true);
   h.setUint32(28, originalPool.length, true);
   h.setUint32(92, posterPool.length, true);
+  h.setUint32(104, supersededKeys.length, true);
 
   let off = HEADER_BYTES;
   const offRowMeta = off;
@@ -134,6 +136,8 @@ export function serializeIndex({ rows, termOffsets, termsBlob, termRanges, posti
   off += originalPool.length;
   const offPosterPool = off;
   off += posterPool.length;
+  const offSuperseded = off;
+  off += supersededKeys.length * 4;
   const total = off;
 
   // u64 little-endian written as two u32 halves (DataView has no setUint64).
@@ -150,6 +154,7 @@ export function serializeIndex({ rows, termOffsets, termsBlob, termRanges, posti
   putU64(h, 80, offTitlePool);
   putU64(h, 88, offOriginalPool);
   putU64(h, 96, offPosterPool);
+  putU64(h, 108, offSuperseded);
 
   const out = new Uint8Array(total);
   const view = new DataView(out.buffer);
@@ -164,6 +169,7 @@ export function serializeIndex({ rows, termOffsets, termsBlob, termRanges, posti
   out.set(titlePool, offTitlePool);
   out.set(originalPool, offOriginalPool);
   out.set(posterPool, offPosterPool);
+  out.set(asBytes(supersededKeys), offSuperseded);
   return out;
 }
 
@@ -182,6 +188,7 @@ export function parseHeader(bytes) {
     titlePoolBytes: u32(24),
     originalPoolBytes: u32(28),
     posterPoolBytes: u32(92),
+    supersededCount: u32(104),
     offRowMeta: u64(36),
     offTermCount: u32(44),
     offTermOffsets: u64(48),
@@ -191,11 +198,12 @@ export function parseHeader(bytes) {
     offTitlePool: u64(80),
     offOriginalPool: u64(88),
     offPosterPool: u64(96),
+    offSuperseded: u64(108),
   };
 }
 
 export function headerBytes(h) {
-  return h.offPosterPool + h.posterPoolBytes;
+  return h.offSuperseded + h.supersededCount * 4;
 }
 
 function asBytes(typed) {

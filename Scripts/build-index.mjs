@@ -32,12 +32,23 @@ function imdbNum(imdb) {
 const MEDIA_TYPE = { movie: 0, tv: 1 };
 
 export async function buildIndexMain(storeDir, outPath, { verbose = true } = {}) {
-  const resolvedOut = resolve(outPath);
   const recordsPath = resolve(storeDir, "records.ndjson");
   if (!existsSync(recordsPath)) {
     throw new Error(`no metadata store at ${recordsPath} — run backfill-metadata.mjs first`);
   }
   if (verbose) console.log(`reading ${recordsPath}`);
+  const records = [];
+  for (const raw of readFileSync(recordsPath, "utf8").split("\n")) {
+    const line = raw.trim();
+    if (line) records.push(JSON.parse(line));
+  }
+  return buildIndexFromRecords(records, outPath, { verbose });
+}
+
+/// Build an index from an explicit record list. `supersededKeys` marks stable keys this file
+/// replaces (a delta); empty for a base.
+export async function buildIndexFromRecords(records, outPath, { supersededKeys = [], verbose = true } = {}) {
+  const resolvedOut = resolve(outPath);
 
   // Parallel per-row arrays + the term map (as before), fed from the store.
   const termMap = new Map();
@@ -62,11 +73,7 @@ export async function buildIndexMain(storeDir, outPath, { verbose = true } = {})
     }
   };
 
-  const text = readFileSync(recordsPath, "utf8");
-  for (const raw of text.split("\n")) {
-    const line = raw.trim();
-    if (!line) continue;
-    const rec = JSON.parse(line);
+  for (const rec of records) {
     const title = rec.title || rec.originalTitle || "";
     if (!title) continue;
 
@@ -172,6 +179,7 @@ export async function buildIndexMain(storeDir, outPath, { verbose = true } = {})
     titlePool: concat8(titleChunks),
     originalPool: concat8(origChunks),
     posterPool: concat8(posterChunks),
+    supersededKeys: Uint32Array.from(supersededKeys),
   });
 
   mkdirSync(dirname(resolvedOut), { recursive: true });

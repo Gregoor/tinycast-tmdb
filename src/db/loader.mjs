@@ -30,6 +30,9 @@ export class MovieIndex {
     this.originalPoolBytes = 0;
     this.offPosterPool = 0;
     this.posterPoolBytes = 0;
+    this.offSuperseded = 0;
+    // Stable keys this index replaces/removes (empty for a base index).
+    this.supersededKeys = new Uint32Array(0);
   }
 
   /// Load the header + inverted index (postings is the bulk of the ~30 MB resident set).
@@ -59,7 +62,23 @@ export class MovieIndex {
 
     const postingsBytes = await this.reader.load(header.offPostings, header.postingsCount * 4);
     this.postings = u32View(postingsBytes);
+
+    // Deltas carry the stable keys they replace/remove (empty for a base index).
+    if (header.supersededCount > 0) {
+      const bytes = await this.reader.load(header.offSuperseded, header.supersededCount * 4);
+      this.supersededKeys = u32View(bytes);
+    }
     return this;
+  }
+
+  /// The stable identity of a record: `id * 2 + mediaType`, matching how the store and deltas key
+  /// records. Used to dedupe and to apply a delta's supersede list.
+  static stableKey(mediaType, id) {
+    return id * 2 + (mediaType === 1 ? 1 : 0);
+  }
+
+  static stableKeyOfRow(rec) {
+    return MovieIndex.stableKey(rec.mediaType, rec.tmdbID);
   }
 
   // ── candidate retrieval ───────────────────────────────────────────────────────────────────────
@@ -110,6 +129,42 @@ export class MovieIndex {
   /// materialising a huge prefix like "alien*" wholesale). Multi-word starts from the SMALLEST
   /// required-term range and keeps rows present in every other range and the last prefix range,
   /// stopping at `cap` — so a giant "2010*" range is never copied.
+  /// Like `_termRange`, but returns one [start,end) per matching term. A prefix spanning several
+  /// terms yields a concatenation that is NOT globally ascending, so membership must be tested
+  /// against each term's slice separately — binary-searching the whole span would miss rows.
+  _termRanges(foldedPrefix) {
+    const span = this._termRange(foldedPrefix);
+    if (!span) return [];
+    const out = [];
+    for (let i = span[0]; i < span[1]; ) {
+      // Walk term by term; termRanges[i] holds each term's start, so skip to the next term's start.
+      out.push([i, 0]);
+      break;
+    }
+    // Derive term indices from the binary search rather than guessing: recompute the first/last term.
+    let lo = 0, hi = this.termCount;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (comparePrefix(foldedPrefix, this._termAt(mid)) <= 0) hi = mid;
+      else lo = mid + 1;
+    }
+    const first = lo;
+    lo = first; hi = this.termCount;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (startsWith(this._termAt(mid), foldedPrefix)) lo = mid + 1;
+      else hi = mid;
+    }
+    const last = lo - 1;
+    const ranges = [];
+    for (let t = first; t <= last; t++) {
+      const start = this.termRanges[t * 2];
+      const end = t + 1 < this.termCount ? this.termRanges[(t + 1) * 2] : this.postings.length;
+      ranges.push([start, end]);
+    }
+    return ranges;
+  }
+
   collectCandidates(queryTerms, cap) {
     const n = queryTerms.length;
     if (n === 0) return [];
@@ -117,37 +172,41 @@ export class MovieIndex {
     if (!lastRange) return [];
 
     if (n === 1) {
-      // The whole prefix range is sorted ascending; take its first `cap` rows.
+      // Every row in the span matches the prefix; take the first `cap` as a sample (deduped).
       const hi = Math.min(lastRange[1], lastRange[0] + cap);
       const out = new Array(hi - lastRange[0]);
       for (let p = lastRange[0], k = 0; p < hi; p++, k++) out[k] = this.postings[p];
-      return out;
+      return dedupe(out);
     }
+
+    const last = this._termRanges(queryTerms[n - 1]);
+    if (last.length === 0) return [];
 
     const required = [];
     for (let t = 0; t < n - 1; t++) {
-      const r = this._termRange(queryTerms[t]);
-      if (!r) return [];
-      required.push(r);
+      const rs = this._termRanges(queryTerms[t]);
+      if (rs.length === 0) return [];
+      let size = 0;
+      for (const [a, b] of rs) size += b - a;
+      required.push({ rs, size });
     }
-    required.sort((a, b) => (a[1] - a[0]) - (b[1] - b[0]));
-    const base = required[0];
-    const others = required.slice(1);
+    // Every match contains all required terms, so scanning the smallest one is a superset.
+    required.sort((a, b) => a.size - b.size);
+    const base = required[0].rs;
+    const others = required.slice(1).map((r) => r.rs);
 
     const out = [];
     outer:
-    for (let p = base[0]; p < base[1]; p++) {
-      const row = this.postings[p];
-      for (let o = 0; o < others.length; o++) {
-        if (!inRange(this.postings, row, others[o][0], others[o][1])) {
-          continue outer;
-        }
+    for (const [a, b] of base) {
+      for (let p = a; p < b; p++) {
+        const row = this.postings[p];
+        for (const rs of others) if (!unionHas(this.postings, row, rs)) continue outer;
+        if (!unionHas(this.postings, row, last)) continue;
+        out.push(row);
+        if (out.length >= cap) break outer;
       }
-      if (!inRange(this.postings, row, lastRange[0], lastRange[1])) continue;
-      out.push(row);
-      if (out.length >= cap) break;
     }
-    return out;
+    return dedupe(out);
   }
 
   // ── row decoding (paged) ──────────────────────────────────────────────────────────────────────
@@ -228,7 +287,9 @@ export class MovieIndex {
       if (rec.titleLength) {
         spans.push({ at: this.offTitlePool + rec.titleOffset, len: rec.titleLength, i, title: true });
       }
-      if (rec.originalLength && rec.originalOffset !== rec.titleOffset) {
+      // The title and original pools are independent, so their offsets are unrelated: an original is
+      // present whenever it has bytes, not when its offset differs from the title's.
+      if (rec.originalLength) {
         spans.push({ at: this.offOriginalPool + rec.originalOffset, len: rec.originalLength, i, title: false });
       }
     }
@@ -285,6 +346,22 @@ function startsWith(term, prefix) {
 
 /// Does `row` appear in postings[r0..r1)? Postings within a term block are sorted ascending, so this
 /// is a binary search.
+/// Membership in a union of per-term slices (each individually ascending).
+function unionHas(postings, row, ranges) {
+  for (const [a, b] of ranges) if (inRange(postings, row, a, b)) return true;
+  return false;
+}
+
+/// A row can appear under two terms that share a prefix ("wire wired"), so drop duplicates.
+function dedupe(rows) {
+  if (rows.length < 2) return rows;
+  rows.sort((a, b) => a - b);
+  let w = 1;
+  for (let i = 1; i < rows.length; i++) if (rows[i] !== rows[i - 1]) rows[w++] = rows[i];
+  rows.length = w;
+  return rows;
+}
+
 function inRange(postings, row, r0, r1) {
   let lo = r0;
   let hi = r1;

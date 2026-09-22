@@ -1,58 +1,88 @@
 // The shared search entry point used by both the Raycast command and the Tinycast root provider.
 // Keeps movie-specific logic out of the storage layer and out of the runtime bridge.
+//
+// Searches one OR MORE indexes (a base plus any deltas) and merges them: a delta supersedes the
+// stable keys it carries, and the newest version of a key wins — so an edited title, a changed
+// poster, or a removed record all resolve correctly without renumbering the base.
 
 import { movieScore } from "./rank.mjs";
 import { normalizeTerms } from "./normalize.mjs";
+import { MovieIndex } from "../db/loader.mjs";
 
 // Two-stage: inverted-index candidate retrieval (stage 1) then fine reranking (stage 2).
-export async function searchMovies(index, query, { limit = 10, candidatePool = 25 } = {}) {
+//
+// `indexes` is a single index or an ordered list — base first, then deltas oldest→newest.
+export async function searchMovies(indexes, query, { limit = 10, candidatePool = 25 } = {}) {
+  const list = Array.isArray(indexes) ? indexes : [indexes];
   const queryTerms = normalizeTerms(query);
   if (queryTerms.length === 0) return [];
-
-  const candidates = index.collectCandidates(queryTerms, candidatePool);
-  if (candidates.length === 0) return [];
-
-  // Read records for candidates, then decode their titles for scoring. Paged from disk: only the
-  // candidate rows touch the pools.
-  const records = await index.readRows(candidates);
-
   const queryFolded = queryTerms.join(" ");
-  // Read all candidate titles/originals in ONE batched pass (span-merged preads), then score.
-  const { titles, originals } = await index.readTitles(records);
-  const scored = [];
-  for (let i = 0; i < records.length; i++) {
-    const rec = records[i];
-    const title = titles[i];
-    const originalTitle = originals[i] || "";
-    scored.push({
-      row: candidates[i],
-      rec,
-      title,
-      originalTitle,
-      score: movieScore(
-        { title, originalTitle, year: rec.year, popularity: rec.popularity, voteCount: rec.voteCount },
-        queryFolded, queryTerms),
-    });
+
+  // Keys superseded by anything newer than index i are stale where they appear in i.
+  const newerSuperseded = supersededAfter(list);
+
+  // Collect scored entries from every index (stage 1 per index).
+  const entries = [];
+  for (let i = 0; i < list.length; i++) {
+    const index = list[i];
+    const candidates = index.collectCandidates(queryTerms, candidatePool);
+    if (candidates.length === 0) continue;
+    const records = await index.readRows(candidates);
+    const { titles, originals } = await index.readTitles(records);
+    const posters = await index.readPosters(records);
+    for (let k = 0; k < records.length; k++) {
+      const rec = records[k];
+      const key = MovieIndex.stableKeyOfRow(rec);
+      // A base row this delta replaces is stale even if its own text still matched the query.
+      if (newerSuperseded[i].has(key)) continue;
+      const title = titles[k];
+      const originalTitle = originals[k] || "";
+      entries.push({
+        key,
+        index: i,
+        rec,
+        title,
+        originalTitle,
+        posterURL: posters[k] ? `https://image.tmdb.org/t/p/w92${posters[k]}` : null,
+        score: movieScore(
+          { title, originalTitle, year: rec.year, voteCount: rec.voteCount },
+          queryFolded, queryTerms),
+      });
+    }
   }
 
-  scored.sort((a, b) => b.score - a.score);
-  const winners = scored.slice(0, limit);
-  // Read posters (paged) for just the winners so the URL is available for icon stream-in.
-  const posters = await index.readPosters(winners.map((w) => w.rec));
-  return winners.map(({ row, rec, title, originalTitle, score }, idx) => ({
-    // Stable identity for frecency + activation: `<tmdbID>`.
-    id: String(rec.tmdbID),
-    tmdbID: rec.tmdbID,
-    imdbID: rec.imdbNum ? `tt${String(rec.imdbNum).padStart(7, "0")}` : null,
-    title,
-    originalTitle: originalTitle || null,
-    year: rec.year || null,
-    popularity: rec.popularity,
-    voteCount: rec.voteCount,
-    // Deterministic TMDB poster URL (w92 thumb), derived from the stored poster_path.
-    posterURL: posters[idx] ? `https://image.tmdb.org/t/p/w92${posters[idx]}` : null,
-    mediaType: rec.mediaType === 1 ? "tv" : "movie",
-    score,
-    row,
-  }));
+  // Dedupe by stable key, keeping the newest index's version, then rank (stage 2).
+  const best = new Map();
+  for (const entry of entries) {
+    const seen = best.get(entry.key);
+    if (!seen || entry.index >= seen.index) best.set(entry.key, entry);
+  }
+
+  return [...best.values()]
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map(({ rec, title, originalTitle, posterURL, score }) => ({
+      // Stable identity for frecency + activation: `<mediaType>:<tmdbID>`.
+      id: `${rec.mediaType === 1 ? "tv" : "movie"}:${rec.tmdbID}`,
+      tmdbID: rec.tmdbID,
+      imdbID: rec.imdbNum ? `tt${String(rec.imdbNum).padStart(7, "0")}` : null,
+      title,
+      originalTitle: originalTitle || null,
+      year: rec.year || null,
+      voteCount: rec.voteCount,
+      posterURL,
+      mediaType: rec.mediaType === 1 ? "tv" : "movie",
+      score,
+    }));
+}
+
+/// For each index, the set of stable keys superseded by any index AFTER it (base at 0).
+function supersededAfter(list) {
+  const after = new Array(list.length);
+  let union = new Set();
+  for (let i = list.length - 1; i >= 0; i--) {
+    after[i] = new Set(union);
+    for (const key of list[i].supersededKeys ?? []) union.add(key);
+  }
+  return after;
 }

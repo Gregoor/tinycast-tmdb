@@ -1,21 +1,24 @@
 name: Daily index
 
-# Rebuilds the TMDB index from the day's ID export and republishes the extension. The metadata
-# store is carried across runs in the Actions cache (free — it is refetchable data, not something a
-# user would miss), so the daily job only pays for new ids, not the whole corpus.
-#
-# The first run needs the store seeded: run `npm run backfill` locally (it takes hours under TMDB's
-# rate limit) and let the restore-key pick up the cache you save, or trigger this with the
-# `backfill-limit` input after seeding a partial store.
+# Keeps the TMDB index current without re-downloading 140 MB: each day emits a small delta (the
+# records that changed), and once a week the base is rebuilt from the full store and the deltas it
+# folds in are pruned. The metadata store is carried across runs in the Actions cache; because that
+# cache evicts after 7 idle days, the store is also published as a release asset and restored from it
+# on a cold cache, so a gap costs seconds rather than a ~19h re-backfill.
 
 on:
   schedule:
     # TMDB publishes the exports by ~08:00 UTC; 09:00 leaves an hour of slack.
-    - cron: "0 9 * * *"
+    - cron: "0 9 * * *" # daily delta
+    - cron: "30 9 * * 0" # Sunday: rebuild the base
   workflow_dispatch:
     inputs:
-      backfill-limit:
-        description: "Max ids to fetch this run (blank = all missing; useful for a first seed)"
+      mode:
+        description: "delta (small, incremental) or base (rebuild everything)"
+        required: false
+        default: "delta"
+      refetch-limit:
+        description: "Records to re-fetch this run (blank = 5000)"
         required: false
         default: ""
 
@@ -40,35 +43,77 @@ jobs:
       - name: Restore metadata store
         uses: actions/cache/restore@v4
         with:
-          path: data/records.ndjson
+          path: |
+            data/records.ndjson
+            data/published.json
           key: tmdb-store-${{ github.run_id }}
           restore-keys: tmdb-store-
+
+      - name: Restore the store from its release asset on a cold cache
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ ! -f data/records.ndjson ]; then
+            mkdir -p data
+            gh release download latest -p store.ndjson.gz -D /tmp/store-asset || true
+            if [ -f /tmp/store-asset/store.ndjson.gz ]; then
+              gunzip -c /tmp/store-asset/store.ndjson.gz > data/records.ndjson
+              echo "restored the store from the release asset ($(wc -l < data/records.ndjson) records)"
+            else
+              echo "no store asset yet — this run seeds from the export"
+            fi
+          fi
+
+      - name: Decide delta vs base
+        id: mode
+        run: |
+          if [ "${{ github.event.schedule }}" = "30 9 * * 0" ] || [ "${{ inputs.mode }}" = "base" ]; then
+            echo "mode=base" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=delta" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Download today's ID export
         run: npm run fetch-exports
 
-      - name: Fetch metadata for new/changed ids
+      - name: Fetch new + changed metadata
         env:
           TMDB_READ_TOKEN: ${{ secrets.TMDB_READ_TOKEN }}
         run: |
-          if [ -n "${{ github.event.inputs.backfill-limit }}" ]; then
-            node Scripts/backfill-metadata.mjs --limit=${{ github.event.inputs.backfill-limit }}
-          else
-            npm run backfill
-          fi
+          REFETCH="${{ inputs.refetch-limit }}"
+          node Scripts/daily-update.mjs --refetch="${REFETCH:-5000}"
 
-      - name: Build index + provider bundle
+      - name: Build delta index
+        if: steps.mode.outputs.mode == 'delta'
+        run: node Scripts/build-delta.mjs data "build/delta-$(date -u +%F).index" --mark
+
+      - name: Build base index
+        if: steps.mode.outputs.mode == 'base'
         run: |
-          npm run build-index
-          npm run build-provider
+          node Scripts/build-index.mjs data build/tmdb.index
+          # The base now contains everything, so the delta chain restarts from here.
+          node -e "require('fs').writeFileSync('data/published.json', JSON.stringify({since: Date.now()}))"
+
+      - name: Build provider bundle
+        run: npm run build-provider
+
+      - name: Compress the store for its release asset
+        run: gzip -c data/records.ndjson > build/store.ndjson.gz
 
       - name: Save metadata store
         uses: actions/cache/save@v4
         with:
-          path: data/records.ndjson
+          path: |
+            data/records.ndjson
+            data/published.json
           key: tmdb-store-${{ github.run_id }}
 
       - name: Publish the rolling release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node Scripts/publish.mjs
+        run: |
+          if [ "${{ steps.mode.outputs.mode }}" = "base" ]; then
+            node Scripts/publish.mjs --base=build/tmdb.index --store=build/store.ndjson.gz
+          else
+            node Scripts/publish.mjs --delta="build/delta-$(date -u +%F).index" --store=build/store.ndjson.gz
+          fi

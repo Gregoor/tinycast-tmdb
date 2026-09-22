@@ -17,6 +17,12 @@ export function key(mediaType, id) {
   return `${mediaType}:${id}`;
 }
 
+/// The numeric stable identity a record keeps across updates — `id * 2 + (tv ? 1 : 0)`. Matches
+/// `MovieIndex.stableKey`, so a delta's supersede list lines up with the base's rows.
+export function stableKey(mediaType, id) {
+  return id * 2 + (mediaType === "tv" ? 1 : 0);
+}
+
 export function storePath(dir) {
   return join(dir, NAME);
 }
