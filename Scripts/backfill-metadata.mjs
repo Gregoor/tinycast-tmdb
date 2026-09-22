@@ -29,7 +29,7 @@ function argValue(flag) {
   return arg ? arg.slice(flag.length) : undefined;
 }
 const outDir = resolve(argValue("--out=") ?? "data");
-const rps = Number(argValue("--requests-per-second=") ?? 45);
+const rps = Number(argValue("--requests-per-second=") ?? 20);
 const limit = Number(argValue("--limit=") ?? 0); // 0 = all
 
 const exportPath = resolve(outDir, "id-export.ndjson");
@@ -121,7 +121,7 @@ async function worker() {
 }
 
 // ~14 concurrent workers; the token bucket is the real throttle, workers just overlap the network RTT.
-const concurrency = 40;
+const concurrency = 16;
 await Promise.all(Array.from({ length: concurrency }, worker));
 
 console.log(`done: ${done} fetched (${skipped404} 404s, ${errors} errors)`);

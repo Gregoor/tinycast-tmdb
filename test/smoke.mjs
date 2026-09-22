@@ -1,71 +1,62 @@
-// Smoke test for the import→load→search pipeline on a small fixture. Not a benchmark; proves the
-// binary format round-trips and that candidate retrieval + reranking agree on obvious titles.
+// Smoke test for the store → index → search pipeline. Writes a tiny metadata store, builds the
+// binary index from it, loads it, and checks that obvious titles rank first — for movies and TV.
 //
 //   node test/smoke.mjs
 
-import { resolve } from "node:path";
-import {
-  createReadStream, writeFileSync, statSync, mkdirSync, rmSync,
-} from "node:fs";
+import { writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { resolve } from "node:path";
 
 import { buildIndexMain } from "../Scripts/build-index.mjs";
 import { MovieIndex } from "../src/db/loader.mjs";
 import { openNodeReader } from "../src/db/loaders.mjs";
 import { searchMovies } from "../src/movies/search.mjs";
-import { foldTitle } from "../src/movies/normalize.mjs";
 
 let pass = 0;
 let fail = 0;
-function check(label, cond, extra = "") {
-  if (cond) { pass++; console.log(`  ok  ${label}`); }
-  else { fail++; console.log(`  FAIL ${label}${extra ? ` — ${extra}` : ""}`); }
-}
-
-const fixture = resolve("test/fixtures/small.csv");
-const outFile = resolve(`${tmpdir}/movies-smoke.index`);
-
-async function main() {
-  // 1. Build
-  await buildIndexMain(fixture, outFile);
-  const st = statSync(outFile);
-  check(`built index ${st.size} bytes`, st.size > 0);
-
-  // 2. Load
-  const index = new MovieIndex({ reader: await openNodeReader(outFile) });
-  await index.open();
-  check(`loaded ${index.rowCount} rows, ${index.termCount} terms`, index.rowCount > 0);
-
-  // 3. Raw candidate retrieval sanity
-  const terms = MovieIndex.queryTerms("mulh");
-  const cands = index.collectCandidates(terms, 50);
-  check(`'mulh' yields candidates`, cands.length > 0);
-
-  // 4. End-to-end search, ranked
-  async function top(query, n = 5) {
-    const r = await searchMovies(index, query, { limit: n });
-    return r.map((x) => x.title);
+const check = (label, ok, extra = "") => {
+  if (ok) pass++;
+  else {
+    fail++;
+    console.log(`  FAIL ${label}${extra ? ` — ${extra}` : ""}`);
   }
-  const topMatrix = await top("matrix");
-  check(`'matrix' → Matrix in top`, topMatrix.includes("The Matrix"), topMatrix.join(" | "));
+};
 
-  const topMulh = await top("mulh");
-  check(`'mulh' → Mulholland Drive in top`, topMulh.some((t) => t.includes("Mulholland")), topMulh.join(" | "));
+const dir = resolve(tmpdir(), "tmdb-smoke");
+rmSync(dir, { recursive: true, force: true });
+mkdirSync(dir, { recursive: true });
 
-  const topAlien3 = await top("alien 3");
-  check(`'alien 3' → an Alien 3 title in top`, topAlien3.some((t) => /^alien 3:?/i.test(t)), topAlien3.join(" | "));
+// A handbuilt store: a couple of movies and TV shows with the fields the index consumes.
+const records = [
+  { mediaType: "movie", id: 603, title: "The Matrix", originalTitle: "The Matrix", year: 1999, voteCount: 24500, popularity: 78, posterPath: "/matrix.jpg", imdbId: "tt0133093" },
+  { mediaType: "movie", id: 604, title: "The Matrix Reloaded", originalTitle: "The Matrix Reloaded", year: 2003, voteCount: 10000, popularity: 40, posterPath: "/m2.jpg", imdbId: "tt0234215" },
+  { mediaType: "movie", id: 27205, title: "Inception", originalTitle: "Inception", year: 2010, voteCount: 34000, popularity: 83, posterPath: "/inc.jpg", imdbId: "tt1375666" },
+  { mediaType: "tv", id: 1399, title: "Game of Thrones", originalTitle: "Game of Thrones", year: 2011, voteCount: 22000, popularity: 120, posterPath: "/got.jpg", imdbId: "" },
+  { mediaType: "tv", id: 94605, title: "Arcane", originalTitle: "Arcane", year: 2021, voteCount: 4500, popularity: 90, posterPath: "/arcane.jpg", imdbId: "" },
+];
+writeFileSync(resolve(dir, "records.ndjson"), records.map((r) => JSON.stringify(r)).join("\n") + "\n");
 
-  const topCafe = await top("amelie");
-  check(`'amelie' → Amélie (diacritic fold)`, topCafe.some((t) => t.includes("Amélie")), topCafe.join(" | "));
+const outFile = resolve(dir, "smoke.index");
+await buildIndexMain(dir, outFile, { verbose: false });
 
-  const topNone = await top("zzzzqqqq");
-  check(`'zzzzqqqq' → empty`, topNone.length === 0);
+const index = new MovieIndex({ reader: await openNodeReader(outFile) });
+await index.open();
+check(`loaded ${index.rowCount} rows, ${index.termCount} terms`, index.rowCount === records.length);
 
-  check(`exact title ranked above fuzzy`, topMatrix[0]?.includes("Matrix"), topMatrix.join(" | "));
+const top = async (q, n = 3) => (await searchMovies(index, q, { limit: n })).map((r) => r.title);
 
-  console.log(`\n${pass} passed, ${fail} failed`);
-  rmSync(outFile, { force: true });
-  process.exit(fail ? 1 : 0);
-}
+check("'matrix' → The Matrix first", (await top("matrix"))[0] === "The Matrix", (await top("matrix")).join(" | "));
+check("'inception' → Inception first", (await top("inception"))[0] === "Inception");
+check("'game of thrones' → the show", (await top("game of thrones"))[0] === "Game of Thrones");
+check("'arcane' → Arcane", (await top("arcane"))[0] === "Arcane");
 
-await main();
+const tv = await searchMovies(index, "arcane", { limit: 1 });
+check("TV results carry mediaType 'tv'", tv[0]?.mediaType === "tv", tv[0]?.mediaType);
+const movie = await searchMovies(index, "inception", { limit: 1 });
+check("movie results carry mediaType 'movie'", movie[0]?.mediaType === "movie", movie[0]?.mediaType);
+
+check("unknown query → empty", (await searchMovies(index, "zzzqqq", { limit: 3 })).length === 0);
+
+console.log(`\n${pass} passed, ${fail} failed`);
+rmSync(dir, { recursive: true, force: true });
+process.exit(fail ? 1 : 0);

@@ -88,7 +88,9 @@ export class MovieIndex {
       else hi = mid;
     }
     const last = lo - 1; // inclusive term index
-    return [this.termRanges[first * 2], this.termRanges[(last + 1) * 2]];
+    // The final term's range ends at the postings tail, which has no `termRanges` entry of its own.
+    const end = last + 1 < this.termCount ? this.termRanges[(last + 1) * 2] : this.postings.length;
+    return [this.termRanges[first * 2], end];
   }
 
   _termAt(i) {
