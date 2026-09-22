@@ -9,7 +9,7 @@ import { openNodeReader } from "../src/db/loaders.mjs";
 import { MovieIndex } from "../src/db/loader.mjs";
 import { searchMovies } from "../src/movies/search.mjs";
 
-const indexPath = process.argv[2] ?? "/tmp/movies-full.index";
+const indexPath = process.argv[2] ?? new URL("../build/tmdb.index", import.meta.url).pathname;
 const reader = await openNodeReader(indexPath);
 const index = new MovieIndex({ reader });
 const t0 = Date.now();
