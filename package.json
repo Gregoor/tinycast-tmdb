@@ -1,0 +1,15 @@
+{
+  "name": "tmdb-movies",
+  "title": "TMDB Movies",
+  "description": "A local, extension-owned movie search index over ~1.5M TMDB titles, queryable from JavaScriptCore (Tinycast's extension runtime).",
+  "author": "tinycast",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build-index": "node Scripts/build-index.mjs",
+    "test": "node test/rank.test.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}

@@ -1,0 +1,9 @@
+# esbuild (local, for the JSC probe build only)
+test/jsc/npm/
+test/jsc/node_modules/
+
+# built probe bundle (regenerate with node test/jsc/build.mjs)
+test/jsc/search-probe.js
+
+# the compact index artifact (built from a TMDB CSV; never commit ~140 MB)
+*.index

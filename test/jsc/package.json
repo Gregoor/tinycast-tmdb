@@ -1,0 +1,13 @@
+{
+  "name": "movie-search-jsc-probe",
+  "title": "Movie Search JSC Probe",
+  "description": "Verifies the movie search index runs inside JavaScriptCore",
+  "author": "tinycast",
+  "commands": [
+    {
+      "name": "search-probe",
+      "title": "Search Probe",
+      "mode": "view"
+    }
+  ]
+}
