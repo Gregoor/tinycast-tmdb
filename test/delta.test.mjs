@@ -98,6 +98,23 @@ const goneFromBase = await searchMovies(filtered, "gone three", { limit: 5 });
 check("...so a removed record is not reachable from it", goneFromBase.length === 0,
   goneFromBase.map((r) => r.title).join(" | "));
 
+// The store is append-only, so an updated record is a second line under the same key. A base must
+// count it once, and as the NEW version — parsing raw lines put both rows in the index.
+const ddir = resolve(dir, "dup");
+mkdirSync(ddir, { recursive: true });
+const dupRec = rec({ id: 7, title: "Before" });
+writeFileSync(join(ddir, "records.ndjson"),
+  [dupRec, rec({ id: 7, title: "After", fetchedAt: 2000 })].map((r) => JSON.stringify(r)).join("\n") + "\n");
+writeFileSync(join(ddir, "id-export.ndjson"),
+  JSON.stringify({ mediaType: "movie", id: 7, adult: false }) + "\n");
+const dpath = resolve(ddir, "base.index");
+await buildIndexMain(ddir, dpath, { verbose: false });
+const dupIndex = new MovieIndex({ reader: await openNodeReader(dpath) });
+await dupIndex.open();
+check("an updated record yields one row, not two", dupIndex.rowCount === 1, String(dupIndex.rowCount));
+const dupHit = await searchMovies(dupIndex, "after", { limit: 5 });
+check("...and the row carries the updated title", dupHit[0]?.title === "After", String(dupHit[0]?.title));
+
 // A single index still works (array-of-one path).
 const alone = await searchMovies(baseIndex, "keep two", { limit: 1 });
 check("single-index search still works", alone[0]?.title === "Keep Two");

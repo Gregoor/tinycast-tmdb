@@ -13,7 +13,7 @@ import { resolve, dirname } from "node:path";
 import { foldText, tokenize } from "../src/movies/normalize.mjs";
 import { serializeIndex } from "../src/db/index-format.mjs";
 import { utf8Encode } from "../src/db/utf8.mjs";
-import { key } from "./store.mjs";
+import { readStore, key } from "./store.mjs";
 
 /// Parse `tt1234567` (or the literal "None" the API sometimes returns) to its numeric part, or 0.
 function imdbNum(imdb) {
@@ -38,11 +38,11 @@ export async function buildIndexMain(storeDir, outPath, { verbose = true } = {})
     throw new Error(`no metadata store at ${recordsPath} — run backfill-metadata.mjs first`);
   }
   if (verbose) console.log(`reading ${recordsPath}`);
-  const records = [];
-  for (const raw of readFileSync(recordsPath, "utf8").split("\n")) {
-    const line = raw.trim();
-    if (line) records.push(JSON.parse(line));
-  }
+  // Last-wins per key, exactly like `readStore`/build-delta: the store is append-only, so an updated
+  // record has a second line, and parsing raw lines would put both the stale and the new row in the
+  // index under one key.
+  const store = readStore(storeDir);
+  const records = [...store.values()];
 
   // The export is the authoritative live id set. A record TMDB has dropped must not survive into a
   // freshly built base, or the only way a deletion could ever apply would be a delta.
