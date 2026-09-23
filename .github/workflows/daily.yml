@@ -67,7 +67,11 @@ jobs:
       - name: Decide delta vs base
         id: mode
         run: |
-          if [ "${{ github.event.schedule }}" = "30 9 * * 0" ] || [ "${{ inputs.mode }}" = "base" ]; then
+          # A cold cache carries no `published.json` marker, so there is nothing to diff a delta
+          # against — without this the first run would ship the entire corpus as a "delta".
+          if [ "${{ github.event.schedule }}" = "30 9 * * 0" ] \
+            || [ "${{ inputs.mode }}" = "base" ] \
+            || [ ! -f data/published.json ]; then
             echo "mode=base" >> "$GITHUB_OUTPUT"
           else
             echo "mode=delta" >> "$GITHUB_OUTPUT"
