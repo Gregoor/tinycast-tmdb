@@ -47,11 +47,12 @@ if (existsSync(exportPath)) {
 const touched = [];
 const superseded = new Set();
 for (const [k, rec] of latest) {
-  if ((rec.fetchedAt ?? 0) > since) {
-    touched.push(rec);
+  const live = liveExport.size === 0 || liveExport.has(k);
+  if (!live) {
+    // Gone from the export: supersede the key and ship no replacement, whether or not it was touched.
     superseded.add(stableKey(rec.mediaType, rec.id));
-  } else if (liveExport.size > 0 && !liveExport.has(k)) {
-    // Present in the store, gone from the export: removed from TMDB. Supersede, ship no replacement.
+  } else if ((rec.fetchedAt ?? 0) > since) {
+    touched.push(rec);
     superseded.add(stableKey(rec.mediaType, rec.id));
   }
 }

@@ -6,7 +6,7 @@
 
 import { writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { resolve } from "node:path";
+import { resolve, join } from "node:path";
 
 import { buildIndexMain, buildIndexFromRecords } from "../Scripts/build-index.mjs";
 import { execFileSync } from "node:child_process";
@@ -81,6 +81,22 @@ check("edited: stale base title gone", !(await titles("old title one")).includes
 check("new record searchable", (await titles("brand new four"))[0] === "Brand New Four");
 check("removed record gone", !(await titles("gone three")).includes("Gone Three"), (await titles("gone three")).join(" | "));
 check("untouched record still found", (await titles("keep two"))[0] === "Keep Two");
+
+// A base built against an export that no longer lists an id must drop it — otherwise a removal could
+// only ever be applied by a delta, never baked out of a fresh base.
+const fdir = resolve(dir, "filtered");
+mkdirSync(fdir, { recursive: true });
+writeFileSync(join(fdir, "records.ndjson"), base.map((r) => JSON.stringify(r)).join("\n") + "\n");
+writeFileSync(join(fdir, "id-export.ndjson"),
+  base.slice(0, 2).map((r) => JSON.stringify({ mediaType: r.mediaType, id: r.id, adult: false })).join("\n") + "\n");
+const fpath = resolve(fdir, "base.index");
+await buildIndexMain(fdir, fpath, { verbose: false });
+const filtered = new MovieIndex({ reader: await openNodeReader(fpath) });
+await filtered.open();
+check("a base drops ids the export no longer lists", filtered.rowCount === 2, String(filtered.rowCount));
+const goneFromBase = await searchMovies(filtered, "gone three", { limit: 5 });
+check("...so a removed record is not reachable from it", goneFromBase.length === 0,
+  goneFromBase.map((r) => r.title).join(" | "));
 
 // A single index still works (array-of-one path).
 const alone = await searchMovies(baseIndex, "keep two", { limit: 1 });

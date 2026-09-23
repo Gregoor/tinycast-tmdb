@@ -13,6 +13,7 @@ import { resolve, dirname } from "node:path";
 import { foldText, tokenize } from "../src/movies/normalize.mjs";
 import { serializeIndex } from "../src/db/index-format.mjs";
 import { utf8Encode } from "../src/db/utf8.mjs";
+import { key } from "./store.mjs";
 
 /// Parse `tt1234567` (or the literal "None" the API sometimes returns) to its numeric part, or 0.
 function imdbNum(imdb) {
@@ -42,7 +43,26 @@ export async function buildIndexMain(storeDir, outPath, { verbose = true } = {})
     const line = raw.trim();
     if (line) records.push(JSON.parse(line));
   }
-  return buildIndexFromRecords(records, outPath, { verbose });
+
+  // The export is the authoritative live id set. A record TMDB has dropped must not survive into a
+  // freshly built base, or the only way a deletion could ever apply would be a delta.
+  const exportPath = resolve(storeDir, "id-export.ndjson");
+  let kept = records;
+  if (existsSync(exportPath)) {
+    const live = new Set();
+    for (const raw of readFileSync(exportPath, "utf8").split("\n")) {
+      const line = raw.trim();
+      if (!line) continue;
+      const e = JSON.parse(line);
+      live.add(key(e.mediaType, e.id));
+    }
+    kept = records.filter((r) => live.has(key(r.mediaType, r.id)));
+    if (verbose) console.log(`export lists ${live.size}; dropping ${records.length - kept.length} removed`);
+  } else if (verbose) {
+    console.warn(`no ${exportPath} — building unfiltered, so removed ids will be included`);
+  }
+
+  return buildIndexFromRecords(kept, outPath, { verbose });
 }
 
 /// Build an index from an explicit record list. `supersededKeys` marks stable keys this file
