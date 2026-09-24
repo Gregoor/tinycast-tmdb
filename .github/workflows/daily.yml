@@ -94,9 +94,11 @@ jobs:
           if [ -z "$OMDB_API_KEY" ]; then
             echo "no OMDB_API_KEY secret — skipping ratings"
           else
-            # The budget is the account's daily quota; set the OMDB_DAILY_BUDGET repository variable
-            # to raise it (a patron tier), or leave it at the free tier's 1,000.
-            node Scripts/fetch-ratings.mjs --top=50000 \
+            # `--top` is only a cap on how much of the queue is considered: leave it wide so the
+            # ordering can reach the whole corpus, and let the budget be the real limit. The budget is
+            # the account's daily quota — set the OMDB_DAILY_BUDGET repository variable to raise it
+            # (a patron tier), or leave it at the free tier's 1,000.
+            node Scripts/fetch-ratings.mjs --top=2000000 \
               --max-requests=${{ vars.OMDB_DAILY_BUDGET || '1000' }} --refresh-days=30
           fi
 
