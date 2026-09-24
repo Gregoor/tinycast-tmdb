@@ -37,13 +37,13 @@ export function storePath(dir) {
 /// point every tool that reads it fails. Chunking also keeps the peak well below what a single
 /// half-gigabyte string costs. `StringDecoder` holds partial multi-byte characters across a chunk
 /// boundary, which is why it is here rather than `chunk.toString()`.
-export function readStore(dir) {
+export function readStore(dir, { chunkBytes = 1 << 20 } = {}) {
   const path = storePath(dir);
   const map = new Map();
   if (!existsSync(path)) return map;
   const decoder = new StringDecoder("utf8");
   const fd = openSync(path, "r");
-  const chunk = Buffer.alloc(1 << 20);
+  const chunk = Buffer.alloc(chunkBytes);
   let carry = "";
   try {
     let position = 0;

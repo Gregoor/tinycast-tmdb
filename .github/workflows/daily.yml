@@ -75,13 +75,20 @@ jobs:
             "https://github.com/${{ github.repository }}/releases/latest/download/manifest.json" \
             | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('deltas') or []))" \
             2>/dev/null || echo 0)
-          if [ ! -f data/published.json ]; then
-            echo "mode=base" >> "$GITHUB_OUTPUT"; echo "cold cache — no marker to diff a delta against"
-          elif [ "${{ inputs.mode }}" = "base" ] || [ "${DELTAS:-0}" -ge 30 ]; then
-            echo "mode=base" >> "$GITHUB_OUTPUT"; echo "${DELTAS} deltas accumulated — compacting"
-          else
-            echo "mode=delta" >> "$GITHUB_OUTPUT"; echo "${DELTAS} deltas so far — adding another"
-          fi
+          node -e "
+            import('./Scripts/manifest.mjs').then((m) => {
+              const mode = m.decideMode({
+                hasMarker: require('fs').existsSync('data/published.json'),
+                requested: '${{ inputs.mode }}',
+                deltas: Number('${DELTAS:-0}'),
+              });
+              require('fs').appendFileSync(process.env.GITHUB_OUTPUT, \`mode=\${mode}\n\`);
+              console.log('mode=' + mode + ' (' + '${DELTAS:-0}' + ' deltas so far)');
+            });
+          "
+
+      - name: Test
+        run: npm test
 
       - name: Download today's ID export
         run: npm run fetch-exports
@@ -121,6 +128,14 @@ jobs:
           node Scripts/build-index.mjs data build/tmdb.index
           # The base now contains everything, so the delta chain restarts from here.
           node -e "require('fs').writeFileSync('data/published.json', JSON.stringify({since: Date.now()}))"
+
+      # The index suites need a full index, which only a base run produces. They are the perf and
+      # retrieval guards, so they hold a base rebuild to the same bar as everything else.
+      - name: Verify the index
+        if: steps.mode.outputs.mode == 'base'
+        run: |
+          node test/rank.test.mjs build/tmdb.index
+          node test/perf.mjs build/tmdb.index
 
       - name: Build provider bundle
         run: npm run build-provider

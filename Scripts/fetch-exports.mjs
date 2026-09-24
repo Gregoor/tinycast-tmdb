@@ -15,20 +15,20 @@ import { resolve } from "node:path";
 // Default to today, or accept --date MM_DD_YYYY (historic reruns fetch that day's file while alive).
 // UTC, not local: the exports are keyed by and published on the UTC day (~08:00 UTC), so a machine
 // east of UTC would otherwise ask for a file that does not exist yet.
-function targetDate() {
-  const arg = process.argv.find((a) => a.startsWith("--date="));
-  if (arg) return arg.slice("--date=".length);
-  const d = new Date();
-  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(d.getUTCDate()).padStart(2, "0");
-  return `${mm}_${dd}_${d.getUTCFullYear()}`;
+function targetDate(now = new Date(), explicit = undefined) {
+  if (explicit) return explicit;
+  const mm = String(now.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(now.getUTCDate()).padStart(2, "0");
+  return `${mm}_${dd}_${now.getUTCFullYear()}`;
 }
+
+const arg = process.argv.find((a) => a.startsWith("--date="));
+const date = targetDate(new Date(), arg ? arg.slice("--date=".length) : undefined);
 
 const outArg = process.argv.find((a) => a.startsWith("--out="));
 const outDir = resolve(outArg ? outArg.slice("--out=".length) : "data");
 mkdirSync(outDir, { recursive: true });
 
-const date = targetDate();
 const KINDS = { movie: "movie_ids", tv: "tv_series_ids" };
 
 const lines = [];

@@ -19,6 +19,8 @@ import { createHash } from "node:crypto";
 import { basename, resolve, join } from "node:path";
 import { tmpdir } from "node:os";
 
+import { buildManifest, nextDeltas } from "./manifest.mjs";
+
 const TAG = "latest";
 const MANIFEST = "manifest.json";
 
@@ -66,28 +68,16 @@ try {
 }
 
 // A new base resets the delta chain; otherwise the deltas accumulate.
-let base = baseArg ? assetInfo(baseArg, "tmdb.index") : prev?.base ?? null;
-let deltas = baseArg ? [] : [...(prev?.deltas ?? [])];
-if (deltaArg) {
-  const name = basename(deltaArg);
-  if (deltas.some((d) => d.name === name)) deltas = deltas.filter((d) => d.name !== name);
-  deltas.push(assetInfo(deltaArg, name));
-}
+const base = baseArg ? assetInfo(baseArg, "tmdb.index") : prev?.base ?? null;
+const deltas = nextDeltas({
+  prevDeltas: prev?.deltas ?? [],
+  isBase: Boolean(baseArg),
+  adding: deltaArg ? [assetInfo(deltaArg, basename(deltaArg))] : [],
+});
 const bundle = assetInfo(bundlePath, "provider.bundle.js");
 const store = storeArg ? assetInfo(storeArg, "store.ndjson.gz") : prev?.store ?? null;
 
-/// The published shape: `local` is for the upload step only, never for the manifest (it would leak
-/// the build machine's paths into a public file).
-const published = (asset) => (asset ? { name: asset.name, bytes: asset.bytes, sha256: asset.sha256 } : null);
-
-const manifest = {
-  version: (prev?.version ?? 0) + 1,
-  generatedAt: new Date().toISOString(),
-  base: published(base),
-  deltas: deltas.map(published),
-  bundle: published(bundle),
-  ...(store ? { store: published(store) } : {}),
-};
+const manifest = buildManifest({ prev, base, deltas, bundle, store });
 
 // Upload first, then the manifest — so a client never sees a manifest whose assets are missing.
 const uploads = [];

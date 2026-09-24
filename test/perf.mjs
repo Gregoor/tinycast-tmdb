@@ -32,11 +32,13 @@ for (let i = 0; i < 20; i++) await searchMovies(index, queryPool[i % queryPool.l
 
 const N = 1000;
 const samples = new Array(N);
+let slowest = { ms: 0, query: "" };
 for (let i = 0; i < N; i++) {
   const q = queryPool[i % queryPool.length];
   const s = Date.now();
   await searchMovies(index, q, { limit: 10 });
   samples[i] = Date.now() - s;
+  if (samples[i] > slowest.ms) slowest = { ms: samples[i], query: q };
 }
 samples.sort((a, b) => a - b);
 const p = (k) => samples[Math.floor(k * samples.length)];
@@ -45,6 +47,22 @@ console.log(`warm queries (${N}): p50 ${p(0.5)}ms  p95 ${p(0.95)}ms  p99 ${p(0.9
 const okP50 = p(0.5) <= 10;
 const okP95 = p(0.95) <= 30;
 const okP99 = p(0.99) < 100;
+
+// A hard ceiling that FAILS the run, distinct from the targets above which only print.
+//
+// It exists because the most expensive bug this suite has met was purely a performance one: a
+// membership check ordered widest-first made "where's wanda" take 797 ms while still returning its
+// correct single result. No correctness assertion can notice that coming back. The bound is loose
+// enough to survive a loaded CI runner and tight enough to catch that class — about 3x headroom.
+const CEILING_MS = 250;
+const okCeiling = slowest.ms < CEILING_MS;
+if (!okCeiling) console.log(`  SLOWEST: '${slowest.query}' took ${slowest.ms}ms (ceiling ${CEILING_MS}ms)`);
+else if (slowest.ms > 40) console.log(`  slowest: '${slowest.query}' ${slowest.ms}ms`);
 console.log(`targets: p50<10ms ${okP50 ? "OK" : "FAIL"}  p95<30ms ${okP95 ? "OK" : "FAIL"}  p99<100ms ${okP99 ? "OK" : "FAIL"}`);
 await reader.close();
-process.exit(okP50 && okP95 && okP99 ? 0 : 1);
+
+if (!okP50 || !okP95 || !okP99 || !okCeiling) {
+  console.log(`\nFAILED: p50 ${okP50 ? "ok" : "MISS"} · p95 ${okP95 ? "ok" : "MISS"} · p99 ${okP99 ? "ok" : "MISS"} · ceiling ${okCeiling ? "ok" : "MISS"}`);
+  process.exit(1);
+}
+process.exit(0);
