@@ -75,8 +75,20 @@ export async function fetchInto(items, { outDir, client, label = "fetch", quiet 
       try {
         const data = await client.getJson(
           `https://api.themoviedb.org/3/${item.mediaType}/${item.id}?language=en-US`);
-        if (data === null) skipped404++;
-        else appendRecord(outDir, recordFromApi(item.mediaType, data));
+        if (data === null) {
+          skipped404++;
+        } else {
+          let record = recordFromApi(item.mediaType, data);
+          // TMDB's /tv payload omits imdb_id outright — only /external_ids carries it — so a show
+          // would otherwise be stored with no IMDb id and could never be looked up on OMDb. One extra
+          // call per new show (~150/day) keeps that from recurring.
+          if (item.mediaType === "tv") {
+            const external = await client.getJson(
+              `https://api.themoviedb.org/3/tv/${item.id}/external_ids`);
+            if (external?.imdb_id) record = { ...record, imdbId: external.imdb_id };
+          }
+          appendRecord(outDir, record);
+        }
       } catch (error) {
         errors++;
         console.error(`  ${item.mediaType} ${item.id}: ${error.message}`);
