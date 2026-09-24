@@ -11,7 +11,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 
 import { foldText, tokenize } from "../src/movies/normalize.mjs";
-import { serializeIndex } from "../src/db/index-format.mjs";
+import { serializeIndex, ratingByte } from "../src/db/index-format.mjs";
 import { utf8Encode } from "../src/db/utf8.mjs";
 import { readStore, key } from "./store.mjs";
 
@@ -81,6 +81,9 @@ export async function buildIndexFromRecords(records, outPath, { supersededKeys =
   const tmdbVal = [];
   const imdbVal = [];
   const mediaVal = [];
+  const rtVals = [];
+  const metacriticVals = [];
+  const imdbRatingVals = [];
 
   const ingest = (folded, row) => {
     for (const w of tokenize(folded)) {
@@ -104,6 +107,10 @@ export async function buildIndexFromRecords(records, outPath, { supersededKeys =
     popularityVals.push(Number(rec.popularity) || 0);
     voteCountVals.push(Number(rec.voteCount) || 0);
     mediaVal.push(MEDIA_TYPE[rec.mediaType] ?? 0);
+    // Ratings arrive from the OMDb enrichment pass; a record without them keeps the "no score" byte.
+    rtVals.push(ratingByte(rec.rtScore));
+    metacriticVals.push(ratingByte(rec.metacriticScore));
+    imdbRatingVals.push(ratingByte(rec.imdbRating));
     titles.push(title);
     const original = rec.originalTitle || "";
     originals.push(original);
@@ -184,6 +191,9 @@ export async function buildIndexFromRecords(records, outPath, { supersededKeys =
       posterOffset: posterOff,
       posterLength: penc.length,
       mediaType: mediaVal[r],
+      rtScore: rtVals[r],
+      metacriticScore: metacriticVals[r],
+      imdbRating: imdbRatingVals[r],
     };
     titleOff += tenc.length;
     origOff += oenc.length;

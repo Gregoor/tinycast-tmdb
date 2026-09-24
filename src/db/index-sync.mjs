@@ -41,9 +41,11 @@ export function syncIndexes({ manifestURL, cacheDir, fs, download, hash, log = (
     assets[asset.name] = asset.sha256;
   }
 
-  // Drop anything the manifest no longer references (deltas folded into a fresh base).
-  const keep = new Set(["manifest.json", "installed.json", ...wanted.map((a) => a.name)]);
-  for (const name of fs.readdirSync(cacheDir)) {
+  // Drop the assets WE installed that the manifest no longer references (deltas folded into a fresh
+  // base). Only files recorded as ours are candidates: anything else in this directory belongs to the
+  // user — a config file, a key — and is not ours to sweep away.
+  const keep = new Set(wanted.map((a) => a.name));
+  for (const name of Object.keys(prior)) {
     if (!keep.has(name)) fs.rmSync(`${cacheDir}/${name}`, { force: true });
   }
 

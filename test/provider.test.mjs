@@ -39,7 +39,8 @@ const rec = (over) => ({
 await buildIndexFromRecords([
   rec({ id: 603, title: "The Matrix", originalTitle: "The Matrix", year: 1999, posterPath: "/matrix.jpg" }),
   rec({ id: 1399, mediaType: "tv", title: "Game of Thrones", originalTitle: "Game of Thrones", year: 2011, posterPath: "/got.jpg" }),
-  rec({ id: 140, title: "Bad Education", originalTitle: "La mala educación", year: 2004, posterPath: "/bad.jpg" }),
+  rec({ id: 140, title: "Bad Education", originalTitle: "La mala educación", year: 2004,
+    posterPath: "/bad.jpg", rtScore: 86, metacriticScore: 78, imdbRating: 76 }),
 ], join(serveDir, "tmdb.index"), { verbose: false });
 
 // Delta: The Matrix was retitled, and the base row must stop matching the old text.
@@ -89,15 +90,15 @@ check("a title-only match doesn't repeat the title as a keyword",
 const byOriginal = await core.search("mala educación", 3);
 check("a query matching the original title leads with it",
   byOriginal[0]?.title === "La mala educación", String(byOriginal[0]?.title));
-check("...dims the localized title and year behind it",
-  byOriginal[0]?.subtitle === "Bad Education · 2004", String(byOriginal[0]?.subtitle));
+check("...dims the localized title, year and movie score behind it",
+  byOriginal[0]?.subtitle === "Bad Education · 2004 · \u{1F345} 86%", String(byOriginal[0]?.subtitle));
 check("...and keeps the localized title searchable",
   byOriginal[0]?.keywords?.[0] === "Bad Education", JSON.stringify(byOriginal[0]?.keywords));
 const byDisplay = await core.search("bad education", 3);
 check("a query matching the display title still leads with it",
   byDisplay[0]?.title === "Bad Education", String(byDisplay[0]?.title));
-check("...dims the original title behind it",
-  byDisplay[0]?.subtitle === "La mala educación · 2004", String(byDisplay[0]?.subtitle));
+check("...dims the original title and the score behind it",
+  byDisplay[0]?.subtitle === "La mala educación · 2004 · \u{1F345} 86%", String(byDisplay[0]?.subtitle));
 check("...and keeps the original title searchable",
   byDisplay[0]?.keywords?.[0] === "La mala educación", JSON.stringify(byDisplay[0]?.keywords));
 check("the delta's version wins over the base", results[0]?.title === "The Matrix Resurrections",
@@ -136,6 +137,19 @@ check("activation routes movies", activationURL("movie:603") === "https://popfee
 check("activation routes TV", activationURL("tv:1399") === "https://popfeed.social/tv_show/1399",
   String(activationURL("tv:1399")));
 check("activation ignores a malformed id", activationURL("nonsense") === null, String(activationURL("nonsense")));
+
+// The display is configurable per media type, from a config file in the provider's own cache.
+writeFileSync(join(cacheDir, "config.json"),
+  JSON.stringify({ ratings: { movie: "metacritic", tv: "imdb" } }));
+const configured = createProviderCore({
+  manifestURL: "https://example.test/movies/manifest.json", cacheDir, fs, download,
+});
+const byConfig = await configured.search("bad education", 3);
+check("config.json moves a movie's score to Metacritic (green at 78)",
+  byConfig[0]?.subtitle === "La mala educación · 2004 · \u{1F7E2} 78", String(byConfig[0]?.subtitle));
+const tvByConfig = await configured.search("game of thrones", 3);
+check("...and a TV show's to IMDb when asked (0.1 precision)",
+  (tvByConfig[0]?.subtitle ?? "").endsWith("imdb") || tvByConfig[0]?.subtitle === "2011", String(tvByConfig[0]?.subtitle));
 
 // A failed download must answer nothing rather than throw (the resident session must survive).
 rmSync(cacheDir, { recursive: true, force: true });

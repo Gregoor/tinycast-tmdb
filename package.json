@@ -14,7 +14,8 @@
     "build-provider": "node Scripts/build-provider.mjs",
     "update": "npm run fetch-exports && npm run daily-update && npm run build-index && npm run build-provider",
     "test": "node test/smoke.mjs && node test/delta.test.mjs && node test/sync.test.mjs && node test/provider.test.mjs",
-    "test:rank": "node test/rank.test.mjs build/tmdb.index"
+    "test:rank": "node test/rank.test.mjs build/tmdb.index",
+    "ratings": "node --env-file=.env Scripts/fetch-ratings.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.25.0"

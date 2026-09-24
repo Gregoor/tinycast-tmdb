@@ -87,6 +87,19 @@ jobs:
           REFETCH="${{ inputs.refetch-limit }}"
           node Scripts/daily-update.mjs --refetch="${REFETCH:-5000}"
 
+      - name: Enrich ratings from OMDb
+        env:
+          OMDB_API_KEY: ${{ secrets.OMDB_API_KEY }}
+        run: |
+          if [ -z "$OMDB_API_KEY" ]; then
+            echo "no OMDB_API_KEY secret — skipping ratings"
+          else
+            # The budget is the account's daily quota; set the OMDB_DAILY_BUDGET repository variable
+            # to raise it (a patron tier), or leave it at the free tier's 1,000.
+            node Scripts/fetch-ratings.mjs --top=50000 \
+              --max-requests=${{ vars.OMDB_DAILY_BUDGET || '1000' }} --refresh-days=30
+          fi
+
       - name: Build delta index
         if: steps.mode.outputs.mode == 'delta'
         run: node Scripts/build-delta.mjs data "build/delta-$(date -u +%F).index" --mark

@@ -4,10 +4,10 @@
 // JS-standard-only — it ships inside the extension bundle and runs in a bare JavaScriptCore context.
 
 export const MAGIC = "TCIDX001";
-export const VERSION = 4;
+export const VERSION = 5;
 
 export const HEADER_BYTES = 128;
-export const ROW_RECORD_BYTES = 37;
+export const ROW_RECORD_BYTES = 40;
 
 // Physical section order (byte offsets live in the header as u64s):
 //   [0] header          HEADER_BYTES fixed
@@ -80,6 +80,9 @@ export function encodeRow(view, at, rec) {
   view.setUint32(at + 30, rec.posterOffset, true);
   view.setUint16(at + 34, rec.posterLength, true);
   view.setUint8(at + 36, rec.mediaType, true);
+  view.setUint8(at + 37, rec.rtScore, true);
+  view.setUint8(at + 38, rec.metacriticScore, true);
+  view.setUint8(at + 39, rec.imdbRating, true);
 }
 
 /// Decode one row record from a DataView at byte offset `at`.
@@ -97,7 +100,16 @@ export function decodeRow(view, at) {
     posterOffset: view.getUint32(at + 30, true),
     posterLength: view.getUint16(at + 34, true),
     mediaType: view.getUint8(at + 36),
+    // 0-100, or 255 when the title has no score from that source.
+    rtScore: view.getUint8(at + 37),
+    metacriticScore: view.getUint8(at + 38),
+    imdbRating: view.getUint8(at + 39),
   };
+}
+
+/// A rating byte: 0-100, or 255 for "no score".
+export function ratingByte(value) {
+  return Number.isInteger(value) && value >= 0 && value <= 100 ? value : 255;
 }
 
 /// Serialize the whole index into one contiguous byte buffer. `rows`, `termOffsets`, `termRanges`

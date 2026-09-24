@@ -82,6 +82,10 @@ export async function searchMovies(indexes, query, { limit = 10, candidatePool =
       mediaType: rec.mediaType === 1 ? "tv" : "movie",
       // True when the query matched the original title rather than the display title.
       matchedOriginal,
+      // 0-100 each, or null when that source has no score for this title (255 on disk).
+      rtScore: rec.rtScore === 255 ? null : rec.rtScore,
+      metacriticScore: rec.metacriticScore === 255 ? null : rec.metacriticScore,
+      imdbRating: rec.imdbRating === 255 ? null : rec.imdbRating,
       score,
     }));
 }

@@ -109,6 +109,17 @@ check("folded deltas are pruned from the cache",
   nodeFs.readdirSync(cacheDir).join(","));
 check("only the base remains", paths.length === 1 && paths[0].endsWith("tmdb.index"), paths.join(" | "));
 
+// Pruning must only remove assets we installed. Anything else in this directory is the user's — a
+// config file, a key — and a sweep that deletes those would take their settings with it.
+writeFileSync(join(cacheDir, "config.json"), JSON.stringify({ ratings: { movie: "rt" } }));
+copyFileSync(join(serveDir, "delta-1.index"), join(serveDir, "delta-2.index"));
+publish(4, { base: true, deltas: ["delta-1.index", "delta-2.index"] });
+sync();
+check("a file we did not install survives a pruning sync",
+  nodeFs.existsSync(join(cacheDir, "config.json")), nodeFs.readdirSync(cacheDir).join(","));
+check("...and it still holds the user's content",
+  JSON.parse(readFileSync(join(cacheDir, "config.json"), "utf8")).ratings.movie === "rt");
+
 console.log(`\n${pass} passed, ${fail} failed`);
 rmSync(root, { recursive: true, force: true });
 process.exit(fail ? 1 : 0);
