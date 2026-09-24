@@ -38,7 +38,8 @@ const rec = (over) => ({
 // Base: The Matrix (movie) + Game of Thrones (TV).
 await buildIndexFromRecords([
   rec({ id: 603, title: "The Matrix", originalTitle: "The Matrix", year: 1999, posterPath: "/matrix.jpg" }),
-  rec({ id: 1399, mediaType: "tv", title: "Game of Thrones", originalTitle: "Game of Thrones", year: 2011, posterPath: "/got.jpg" }),
+  rec({ id: 1399, mediaType: "tv", title: "Game of Thrones", originalTitle: "Game of Thrones", year: 2011,
+    posterPath: "/got.jpg", imdbRating: 93 }),
   rec({ id: 140, title: "Bad Education", originalTitle: "La mala educación", year: 2004,
     posterPath: "/bad.jpg", rtScore: 86, metacriticScore: 78, imdbRating: 76 }),
 ], join(serveDir, "tmdb.index"), { verbose: false });
@@ -158,9 +159,12 @@ check("scores render in the configured order",
   byOrder[0]?.subtitle === "La mala educación · 2004 · \u{1F7E2} 78 · \u{1F345} 86%",
   String(byOrder[0]?.subtitle));
 
-const tvByConfig = await configured.search("game of thrones", 3);
-check("...and orders a TV show's scores as asked",
-  (tvByConfig[0]?.subtitle ?? "").endsWith("imdb") || tvByConfig[0]?.subtitle === "2011", String(tvByConfig[0]?.subtitle));
+// A title with no score from its own list falls back, so it shows something rather than nothing.
+const tvFallback = await core.search("game of thrones", 3);
+check("a TV show with only an IMDb rating falls back to it",
+  tvFallback[0]?.subtitle === "2011 · imdb 9.3", String(tvFallback[0]?.subtitle));
+check("...and a movie with RT and Metacritic shows no fallback alongside them",
+  (byDisplay[0]?.subtitle ?? "").includes("imdb") === false, String(byDisplay[0]?.subtitle));
 
 // A failed download must answer nothing rather than throw (the resident session must survive).
 rmSync(cacheDir, { recursive: true, force: true });

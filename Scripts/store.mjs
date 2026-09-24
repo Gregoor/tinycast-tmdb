@@ -8,7 +8,8 @@
 //   { mediaType, id, title, originalTitle, year, popularity, voteCount, posterPath,
 //     imdbId, firstSeen, fetchedAt }
 
-import { readFileSync, appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, appendFileSync, existsSync, mkdirSync, openSync, readSync, closeSync, statSync } from "node:fs";
+import { StringDecoder } from "node:string_decoder";
 import { join } from "node:path";
 
 const NAME = "records.ndjson";
@@ -29,15 +30,43 @@ export function storePath(dir) {
 
 /// Load every record into a Map keyed by `mediaType:id`. ~1.5M+1M records fit comfortably in a
 /// Node Map; this runs offline as a tool, not in the JSContext runtime.
+/// Read the store, last line wins per key.
+///
+/// Streamed rather than slurped: `readFileSync(path, "utf8")` cannot handle a file past Node's
+/// maximum string length (~512 MB), and the store passes that once a bulk enrichment lands — at which
+/// point every tool that reads it fails. Chunking also keeps the peak well below what a single
+/// half-gigabyte string costs. `StringDecoder` holds partial multi-byte characters across a chunk
+/// boundary, which is why it is here rather than `chunk.toString()`.
 export function readStore(dir) {
   const path = storePath(dir);
   const map = new Map();
   if (!existsSync(path)) return map;
-  for (const raw of readFileSync(path, "utf8").split("\n")) {
-    const line = raw.trim();
-    if (!line) continue;
-    const rec = JSON.parse(line);
-    map.set(key(rec.mediaType, rec.id), rec);
+  const decoder = new StringDecoder("utf8");
+  const fd = openSync(path, "r");
+  const chunk = Buffer.alloc(1 << 20);
+  let carry = "";
+  try {
+    let position = 0;
+    for (;;) {
+      const read = readSync(fd, chunk, 0, chunk.length, position);
+      if (read <= 0) break;
+      position += read;
+      const text = carry + decoder.write(chunk.subarray(0, read));
+      const lines = text.split("\n");
+      carry = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line) continue;
+        const rec = JSON.parse(line);
+        map.set(key(rec.mediaType, rec.id), rec);
+      }
+    }
+    const tail = (carry + decoder.end()).trim();
+    if (tail) {
+      const rec = JSON.parse(tail);
+      map.set(key(rec.mediaType, rec.id), rec);
+    }
+  } finally {
+    closeSync(fd);
   }
   return map;
 }

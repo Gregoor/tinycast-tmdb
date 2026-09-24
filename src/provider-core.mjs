@@ -10,11 +10,13 @@ import { MovieIndex } from "./db/loader.mjs";
 import { searchMovies } from "./movies/search.mjs";
 import { foldTitle } from "./movies/normalize.mjs";
 
-/// Which scores a row shows, per media type, in the order given. A provider cannot read Tinycast's
-/// preferences yet, so this comes from a config file in the provider's own cache:
-///   { "ratings": { "movie": ["rt", "metacritic"], "tv": ["metacritic"] } }
+/// Which scores a row shows, per media type, in the order given — plus a fallback list used only
+/// when the media type's own list has nothing for that title, so a film only IMDb has rated still
+/// shows a number rather than nothing. A provider cannot read Tinycast's preferences yet, so this
+/// comes from a config file in the provider's own cache:
+///   { "ratings": { "movie": ["rt","metacritic"], "tv": ["metacritic"], "fallback": ["imdb"] } }
 /// Values are "rt", "metacritic" and "imdb"; an empty list shows no score.
-const DEFAULT_RATINGS = { movie: ["rt", "metacritic"], tv: ["metacritic"] };
+const DEFAULT_RATINGS = { movie: ["rt", "metacritic"], tv: ["metacritic"], fallback: ["imdb"] };
 
 function readRatingsPreference(fs, cacheDir, log) {
   const path = `${cacheDir}/config.json`;
@@ -25,6 +27,7 @@ function readRatingsPreference(fs, cacheDir, log) {
     return {
       movie: asList(parsed.movie) ?? DEFAULT_RATINGS.movie,
       tv: asList(parsed.tv) ?? DEFAULT_RATINGS.tv,
+      fallback: asList(parsed.fallback) ?? DEFAULT_RATINGS.fallback,
     };
   } catch (error) {
     log(`config.json unreadable (${error?.message ?? error}) — using the defaults`);
@@ -46,14 +49,18 @@ function scoreText(source, value) {
 
 /// The chosen scores for a row, in the configured order, skipping sources with no score for it.
 function ratingTexts(movie, ratings) {
-  const chosen = ratings[movie.mediaType] ?? [];
-  return chosen
+  const primary = scoreTexts(movie, ratings[movie.mediaType] ?? []);
+  return primary.length > 0 ? primary : scoreTexts(movie, ratings.fallback ?? []);
+}
+
+function scoreTexts(movie, sources) {
+  return sources
     .map((source) =>
       source === "rt" ? movie.rtScore
       : source === "metacritic" ? movie.metacriticScore
       : source === "imdb" ? movie.imdbRating
       : null)
-    .map((value, i) => scoreText(chosen[i], value))
+    .map((value, i) => scoreText(sources[i], value))
     .filter((text) => text !== "");
 }
 
