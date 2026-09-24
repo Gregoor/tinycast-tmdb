@@ -200,8 +200,14 @@ export class MovieIndex {
     for (const [a, b] of base) {
       for (let p = a; p < b; p++) {
         const row = this.postings[p];
-        for (const rs of others) if (!unionHas(this.postings, row, rs)) continue outer;
-        if (!unionHas(this.postings, row, last)) continue;
+        let matches = true;
+        for (const rs of others) {
+          if (!unionHas(this.postings, row, rs)) {
+            matches = false;
+            break;
+          }
+        }
+        if (!matches || !unionHas(this.postings, row, last)) continue;
         out.push(row);
         if (out.length >= cap) break outer;
       }

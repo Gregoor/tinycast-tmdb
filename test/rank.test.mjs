@@ -47,6 +47,12 @@ await expectFirst("mulholl", "Mulholland Drive (2001)");
 await expectFirst("matrix 1999", "The Matrix (1999)");
 await expectFirst("interstellar", "Interstellar (2014)");
 await expectFirst("amelie", "Amélie (2001)"); // diacritic fold
+// Three or more terms exercise every required-term check; a `continue` aimed at the wrong loop once
+// made every such query return nothing at all.
+await expectFirst("city of god", "City of God (2002)");
+// Several films share this exact title, so assert the title rather than one year's entry.
+await expectFirst("war of the worlds", "War of the Worlds");
+await expectFirst("the silence of the lambs", "The Silence of the Lambs (1991)");
 check("unknown query → empty", (await titles("zzzzqqqqxx", 5)).length === 0);
 
 // ── media type reaches the result (movie vs TV) ─────────────────────────────────────────────────
