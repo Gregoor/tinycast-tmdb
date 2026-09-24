@@ -39,6 +39,7 @@ const rec = (over) => ({
 await buildIndexFromRecords([
   rec({ id: 603, title: "The Matrix", originalTitle: "The Matrix", year: 1999, posterPath: "/matrix.jpg" }),
   rec({ id: 1399, mediaType: "tv", title: "Game of Thrones", originalTitle: "Game of Thrones", year: 2011, posterPath: "/got.jpg" }),
+  rec({ id: 140, title: "Bad Education", originalTitle: "La mala educación", year: 2004, posterPath: "/bad.jpg" }),
 ], join(serveDir, "tmdb.index"), { verbose: false });
 
 // Delta: The Matrix was retitled, and the base row must stop matching the old text.
@@ -80,8 +81,21 @@ check("label is the media kind", results[0]?.label === "Movie", String(results[0
 check("subtitle carries the year", results[0]?.subtitle === "2021", String(results[0]?.subtitle));
 check("poster URL is built from poster_path",
   results[0]?.posterURL === "https://image.tmdb.org/t/p/w92/matrix2.jpg", String(results[0]?.posterURL));
-check("original title rides along as a keyword",
-  results[0]?.keywords?.[0] === "The Matrix Resurrections", JSON.stringify(results[0]?.keywords));
+check("a title-only match doesn't repeat the title as a keyword",
+  (results[0]?.keywords ?? []).length === 0, JSON.stringify(results[0]?.keywords));
+
+// Found by its original title: the row leads with that title, dims the localized one behind it, and
+// keeps the localized title searchable.
+const byOriginal = await core.search("mala educación", 3);
+check("a query matching the original title leads with it",
+  byOriginal[0]?.title === "La mala educación", String(byOriginal[0]?.title));
+check("...dims the localized title and year behind it",
+  byOriginal[0]?.subtitle === "Bad Education · 2004", String(byOriginal[0]?.subtitle));
+check("...and keeps the localized title searchable",
+  byOriginal[0]?.keywords?.[0] === "Bad Education", JSON.stringify(byOriginal[0]?.keywords));
+const byDisplay = await core.search("bad education", 3);
+check("a query matching the display title still leads with it",
+  byDisplay[0]?.title === "Bad Education", String(byDisplay[0]?.title));
 check("the delta's version wins over the base", results[0]?.title === "The Matrix Resurrections",
   String(results[0]?.title));
 check("first search downloaded manifest + base + delta",

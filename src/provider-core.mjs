@@ -71,12 +71,24 @@ export function createProviderCore({
 }
 
 function toCandidate(movie) {
+  const original = movie.originalTitle;
+  // Found by its original title: lead with that title so the row shows what was matched, and keep the
+  // localized title dimmed behind it. Otherwise the display title leads, as it always did.
+  const leads = Boolean(movie.matchedOriginal && original);
+  const name = leads ? original : movie.title;
+  const other = leads ? movie.title : original;
+  // Only when the row leads with the original does the localized title ride behind it; otherwise the
+  // subtitle is the year alone, as before.
+  const subtitle = leads
+    ? [other, movie.year != null ? movie.year : null].filter((part) => part != null && part !== "").join(" · ")
+    : (movie.year != null ? String(movie.year) : "");
   return {
     // The id carries the media type so activation can route to the right popfeed path.
     id: `${movie.mediaType}:${movie.tmdbID}`,
-    title: movie.title,
-    subtitle: movie.year != null ? String(movie.year) : undefined,
-    keywords: movie.originalTitle ? [movie.originalTitle] : [],
+    title: name,
+    subtitle: subtitle || undefined,
+    // Whichever title isn't the row's name stays searchable.
+    keywords: other && other !== name ? [other] : [],
     posterURL: movie.posterURL ?? undefined,
     label: movie.mediaType === "tv" ? "TV Show" : "Movie",
   };

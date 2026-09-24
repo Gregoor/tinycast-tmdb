@@ -6,7 +6,7 @@
 // poster, or a removed record all resolve correctly without renumbering the base.
 
 import { movieScore } from "./rank.mjs";
-import { normalizeTerms } from "./normalize.mjs";
+import { foldTitle, normalizeTerms } from "./normalize.mjs";
 import { MovieIndex } from "../db/loader.mjs";
 
 // Two-stage: inverted-index candidate retrieval (stage 1) then fine reranking (stage 2).
@@ -37,6 +37,8 @@ export async function searchMovies(indexes, query, { limit = 10, candidatePool =
       if (newerSuperseded[i].has(key)) continue;
       const title = titles[k];
       const originalTitle = originals[k] || "";
+      const titleFolded = foldTitle(title);
+      const originalFolded = originalTitle ? foldTitle(originalTitle) : "";
       entries.push({
         key,
         index: i,
@@ -47,6 +49,12 @@ export async function searchMovies(indexes, query, { limit = 10, candidatePool =
         score: movieScore(
           { title, originalTitle, year: rec.year, voteCount: rec.voteCount },
           queryFolded, queryTerms),
+        // Nothing matched the display title but the original did, so a row showing the match should
+        // lead with the original. Read off the text rather than the scorer's tiers: its multi-word
+        // original tier only fires on an exact whole-string match, so a partial original match
+        // ('mala educación' -> 'La mala educación') would otherwise go uncredited.
+        matchedOriginal: Boolean(originalFolded) && originalFolded !== titleFolded &&
+          matchesFolded(originalFolded, queryTerms) && !matchesFolded(titleFolded, queryTerms),
       });
     }
   }
@@ -61,7 +69,7 @@ export async function searchMovies(indexes, query, { limit = 10, candidatePool =
   return [...best.values()]
     .sort((a, b) => b.score - a.score)
     .slice(0, limit)
-    .map(({ rec, title, originalTitle, posterURL, score }) => ({
+    .map(({ rec, title, originalTitle, posterURL, score, matchedOriginal }) => ({
       // Stable identity for frecency + activation: `<mediaType>:<tmdbID>`.
       id: `${rec.mediaType === 1 ? "tv" : "movie"}:${rec.tmdbID}`,
       tmdbID: rec.tmdbID,
@@ -72,8 +80,17 @@ export async function searchMovies(indexes, query, { limit = 10, candidatePool =
       voteCount: rec.voteCount,
       posterURL,
       mediaType: rec.mediaType === 1 ? "tv" : "movie",
+      // True when the query matched the original title rather than the display title.
+      matchedOriginal,
       score,
     }));
+}
+
+/// Whether every query term appears in `folded`, as a token prefix or anywhere in the string.
+function matchesFolded(folded, queryTerms) {
+  if (!folded) return false;
+  const words = folded.split(" ");
+  return queryTerms.every((q) => words.some((w) => w.startsWith(q)) || folded.includes(q));
 }
 
 /// For each index, the set of stable keys superseded by any index AFTER it (base at 0).
