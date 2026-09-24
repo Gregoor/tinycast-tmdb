@@ -193,7 +193,13 @@ export class MovieIndex {
     // Every match contains all required terms, so scanning the smallest one is a superset.
     required.sort((a, b) => a.size - b.size);
     const base = required[0].rs;
-    const others = required.slice(1).map((r) => r.rs);
+
+    // Every other term is a membership test paid by each scanned row, and one test costs a binary
+    // search per term in that prefix — so the cost is the prefix's WIDTH, not its posting count.
+    // Narrowest first, so a rare term rejects a row before a vast one is ever consulted: "s" spans
+    // 42,752 terms here, and checking it before "wanda" made "where's wanda" take 800 ms because the
+    // scan ran to exhaustion looking for a single match.
+    const checks = [...required.slice(1).map((r) => r.rs), last].sort((a, b) => a.length - b.length);
 
     const out = [];
     outer:
@@ -201,13 +207,13 @@ export class MovieIndex {
       for (let p = a; p < b; p++) {
         const row = this.postings[p];
         let matches = true;
-        for (const rs of others) {
+        for (const rs of checks) {
           if (!unionHas(this.postings, row, rs)) {
             matches = false;
             break;
           }
         }
-        if (!matches || !unionHas(this.postings, row, last)) continue;
+        if (!matches) continue;
         out.push(row);
         if (out.length >= cap) break outer;
       }

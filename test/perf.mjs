@@ -22,6 +22,9 @@ const queryPool = [
   "dark knight", "inception", "inception 2010", "parasite", "amelie", "casablanca",
   "pulp fiction", "the godfather", "forrest gump", "schindler list", "gone with the wind",
   "et", "blade runner", "the shawshank redemption", "titanic", "avatar", "jurassic park",
+  // Wide-prefix cases: a single-letter term spans tens of thousands of index terms, so these are the
+  // queries where a badly ordered membership check costs hundreds of milliseconds.
+  "where's wanda", "a star is born", "the s", "x files",
 ];
 
 // Warm the OS page cache + any lazy state.

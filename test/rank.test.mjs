@@ -58,6 +58,11 @@ await expectFirst("the silence of the lambs", "The Silence of the Lambs (1991)")
 await expectFirst("千と千尋", "Spirited Away (2001)");
 await expectFirst("Ночной дозор", "Night Watch (2004)");
 await expectFirst("Дневной дозор", "Day Watch (2006)");
+// A wide prefix must not be checked before a rare term. "s" spans ~43k index terms, and consulting
+// it first made this query scan the whole "where" range at ~43k binary searches per row (800 ms).
+const wide = await titles("where's wanda", 5);
+check("a wide prefix plus a rare term still finds the title",
+  wide.some((t) => t.includes("Wanda")), wide.join(" | "));
 check("unknown query → empty", (await titles("zzzzqqqqxx", 5)).length === 0);
 
 // ── media type reaches the result (movie vs TV) ─────────────────────────────────────────────────
