@@ -1,10 +1,10 @@
 // The Tinycast root-search provider for TMDB movies and TV shows. Bundled to a single self-contained
 // file that AppCore loads into a resident JavaScriptCore session.
 //
-// The index is NOT committed — at ~140 MB it is past GitHub's 100 MB committed-file limit. It ships
-// as a GitHub Release asset beside a small manifest and per-day deltas; the manifest is fetched every
-// launch and an index file only when its recorded hash changed, so a launch costs one small request
-// and a day's update costs only that day's delta.
+// The index is NOT committed — it is rebuilt every day, so it ships as a GitHub Release asset beside a
+// small manifest and per-day deltas. The manifest is fetched every launch and an index file only when
+// its recorded hash changed, so a launch costs one small request and a day's update only that day's
+// delta. The store (every record, ~140 MB compressed) ships as a third asset for base rebuilds.
 //
 // A provider's API surface is restricted to `rootSearch.*` + `open`, but the Node builtins are
 // provided to every bundle by design — so the index is downloaded with curl through the process shim.
@@ -13,8 +13,11 @@
 // whole body in memory. That, plus the resident-session runtime, makes this Tinycast-only: it is not a
 // Raycast extension and must stay out of the Raycast store and any registry catalog.
 //
-// The provider's `@tinycast/api` module exposes only `registerRootSearchProvider` and `open`, so the
-// cache directory is derived from the home directory rather than `environment.supportPath`.
+// `@tinycast/api` exposes only `registerRootSearchProvider` and `open`, so `environment.supportPath` is
+// out of reach and the host hands the cache directory over in the environment instead — already scoped
+// by bundle id, so a Dev build's index never collides with an installed copy's. A re-downloadable,
+// hash-verified artifact belongs in Caches rather than Application Support, and the host decides that;
+// this file only has to be told where it is.
 //
 // The default export must stay "alive" (return a never-settling promise) so the resident session keeps
 // the runtime mounted across keystrokes — see RootSearchProviderHost.
@@ -25,8 +28,10 @@ import { createProviderCore, activationURL } from "./provider-core.mjs";
 const MANIFEST_URL =
   "https://github.com/Gregoor/tinycast-tmdb/releases/latest/download/manifest.json";
 
-/// A re-downloadable, hash-verified artifact belongs in Caches, not Application Support.
-const CACHE_DIR = `${require("os").homedir()}/Library/Caches/tinycast-root-search/movies`;
+const CACHE_DIR = process.env.TINYCAST_PROVIDER_CACHE;
+if (!CACHE_DIR) {
+  throw new Error("TINYCAST_PROVIDER_CACHE is unset — the host must say where the index belongs");
+}
 
 /// Fetch `url` to `path` through curl, writing beside the target and renaming so a failed or partial
 /// transfer never leaves a truncated index where the loader would open it.

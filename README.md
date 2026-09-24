@@ -88,7 +88,13 @@ for the corpus**. `Scripts/fetch-ratings.mjs` therefore spends its quota only wh
 exist, weighted by vote count and floored at 10 votes.
 
 A row shows `rt` for both media types with `imdb` behind it as a fallback; any combination, in any
-order, is configurable in the provider's cache at `~/Library/Caches/tinycast-root-search/movies/config.json`:
+order, is configurable from a `config.json` in the provider's cache directory. Tinycast hands the bundle
+that directory (its `TINYCAST_PROVIDER_CACHE`), scoped per channel and per bundle id so a Dev build never
+shares an installed copy's index:
+
+```
+~/Library/Caches/<bundle id>/provider-cache/movies/config.json
+```
 
 ```json
 { "ratings": { "movie": ["rt", "metacritic"], "tv": ["rt"], "fallback": ["imdb"] } }
