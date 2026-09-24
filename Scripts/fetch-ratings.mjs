@@ -33,6 +33,11 @@ const outDir = argValue("--out=") ?? "data";
 const top = Number(argValue("--top=") ?? 5000);
 const maxRequests = Number(argValue("--max-requests=") ?? 1000);
 const refreshDays = Number(argValue("--refresh-days=") ?? 30);
+// Rotten Tomatoes and Metacritic only review titles anyone has heard of. Measured against this
+// corpus, coverage runs 94% above 10k votes, 31% at 50-100, ~20% at 10-50 and effectively zero below
+// that — where ~1.4M of the 1.48M records sit. Without a floor the pass would spend whole days of
+// quota on titles those sites have never scored.
+const minVotes = Number(argValue("--min-votes=") ?? 10);
 const rps = Number(argValue("--requests-per-second=") ?? 5);
 const DAY = 24 * 60 * 60 * 1000;
 const now = Date.now();
@@ -52,6 +57,7 @@ const store = readStore(outDir);
 // budget re-checked the same popular titles for ever and never reached the tail.
 const queue = [...store.entries()]
   .filter(([, rec]) => (rec.imdbId ?? "").trim())
+  .filter(([, rec]) => (rec.voteCount ?? 0) >= minVotes)
   .filter(([, rec]) => isStale(rec))
   .sort((a, b) => {
     const aRated = a[1].ratingsAt ?? 0;
@@ -62,7 +68,8 @@ const queue = [...store.entries()]
   })
   .slice(0, top);
 
-console.log(`store ${store.size}; candidates ${queue.length}; budget ${maxRequests} requests`);
+const belowFloor = [...store.values()].filter((r) => (r.voteCount ?? 0) < minVotes).length;
+console.log(`store ${store.size}; ${belowFloor} below ${minVotes} votes (skipped); candidates ${queue.length}; budget ${maxRequests}`);
 if (process.argv.includes("--dry-run")) {
   for (const [recordKey, rec] of queue.slice(0, 10)) {
     const state = rec.ratingsAt ? `rated ${Math.round((now - rec.ratingsAt) / DAY)}d ago` : "unrated";
