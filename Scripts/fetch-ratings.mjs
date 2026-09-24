@@ -14,8 +14,10 @@
 
 import { readStore, appendRecord } from "./store.mjs";
 import { inBand } from "./band.mjs";
+import { readResponse } from "../src/omdb.mjs";
 
 const API = "https://www.omdbapi.com/";
+
 const apiKey = process.env.OMDB_API_KEY;
 if (!apiKey) {
   console.error("set OMDB_API_KEY in the environment");
@@ -118,7 +120,7 @@ for (const [recordKey, rec] of queue) {
   let payload;
   try {
     const response = await fetch(`${API}?apikey=${apiKey}&i=${encodeURIComponent(rec.imdbId.trim())}`);
-    payload = await response.json();
+    payload = readResponse(await response.text());
   } catch (error) {
     errors++;
     console.error(`  ${recordKey}: ${error.message}`);
@@ -161,4 +163,7 @@ for (const [recordKey, rec] of queue) {
 
 const minutes = ((Date.now() - started) / 60000).toFixed(1);
 console.log(`done: ${done} requests in ${minutes}m (rt ${withRt}, metacritic ${withMeta}, unknown ${unknown}, errors ${errors})`);
-if (errors > 0) process.exitCode = 1;
+// One unreadable response is not a failed run, and failing it stops CI before it publishes — which is
+// exactly what happened once. A systemic failure (a dead key, a blocked host, an outage) still has to
+// fail loudly, so the threshold is a fraction of the run rather than a count.
+if (errors > Math.max(10, done * 0.05)) process.exitCode = 1;

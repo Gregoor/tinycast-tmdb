@@ -14,6 +14,7 @@ import { resolve, join } from "node:path";
 
 import { buildManifest, decideMode, nextDeltas, BASE_REBUILD_DELTAS } from "../Scripts/manifest.mjs";
 import { inBand, MIN_VOTES, RECENT_YEARS } from "../Scripts/band.mjs";
+import { readResponse } from "../src/omdb.mjs";
 import { buildIndexMain } from "../Scripts/build-index.mjs";
 import { MovieIndex } from "../src/db/loader.mjs";
 import { openNodeReader } from "../src/db/loaders.mjs";
@@ -153,6 +154,42 @@ const check = (label, ok, extra = "") => {
   const built = new MovieIndex({ reader: await openNodeReader(bpath) });
   await built.open();
   check("a base built through the builder holds only in-band rows", built.rowCount === 2, String(built.rowCount));
+}
+
+// ── reading OMDb's responses ─────────────────────────────────────────────────────────────────────
+// The real body for tt10994444, which broke a daily run: OMDb failed to escape a backslash in Writer
+// and Actors, so the whole response was unparseable and the pass exited 1 — in CI, that would have
+// stopped the run before it published. Reproduced in production, so it is pinned here.
+{
+  const malformed =
+    '{"Title":"STZ","Year":"2025","Director":"Matthew Clark \\","Writer":"Matthew Clark \\, Tesha Clark",' +
+    '"Actors":"Alexis Baca, Matthew Clark \\, Craig Edwards","Metascore":"N/A","imdbRating":"6.1",' +
+    '"imdbVotes":"1,204","Ratings":[{"Source":"Rotten Tomatoes","Value":"31%"},{"Source":"Metacritic","Value":"54/100"}]}';
+  let threw = false;
+  try {
+    JSON.parse(malformed);
+  } catch {
+    threw = true;
+  }
+  check("the raw body OMDb sends really is invalid JSON", threw);
+
+  const read = readResponse(malformed);
+  check("...and the fields the pass uses are read regardless",
+    read.imdbRating === "6.1" && read.imdbVotes === "1,204", JSON.stringify(read));
+  check("...including the Rotten Tomatoes and Metacritic ratings",
+    read.Ratings.length === 2 && read.Ratings[0].Value === "31%" && read.Ratings[1].Source === "Metacritic",
+    JSON.stringify(read.Ratings));
+
+  const plain = readResponse('{"Response":"True","imdbRating":"8.0","imdbVotes":"2,000,000","Ratings":[]}');
+  check("a well-formed response reads the same way",
+    plain.imdbRating === "8.0" && plain.Ratings.length === 0);
+
+  // The error envelope must keep working — a bad key is how the pass detects a fatal condition.
+  const failed = readResponse('{"Response":"False","Error":"Invalid API key!"}');
+  check("an error envelope still yields its message", failed.Error === "Invalid API key!", JSON.stringify(failed));
+
+  check("a title OMDb does not know reads as no scores",
+    readResponse('{"Response":"False","Error":"Movie not found!"}').Error === "Movie not found!");
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
