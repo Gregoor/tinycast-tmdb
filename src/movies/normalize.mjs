@@ -4,27 +4,20 @@
 
 const SPACE = " ";
 
-// NFD then strip combining marks (diacritics), then lower-case and keep [a-z0-9] only, collapsing
-// gaps to single spaces. Unambiguous: café -> cafe, Zoë -> zoe, déjà-vu -> deja vu, ½ -> "".
+// NFD, drop combining marks (diacritics), lower-case, and keep letters and digits of ANY script,
+// collapsing every other run to a single space. Unambiguous: café -> cafe, Zoë -> zoe,
+// déjà-vu -> deja vu, and unlike an [a-z0-9] filter it does not silently delete every non-Latin
+// title: 千と千尋の神隠し -> 千と千尋の神隠し, Дневной дозор -> дневной дозор.
+//
+// Marks are dropped rather than spaced so a diacritic cannot split a word; everything else that is
+// not a letter or digit (punctuation, symbols, emoji) becomes a separator.
 export function foldText(input) {
-  const decomposed = String(input ?? "").normalize("NFD");
-  const out = [];
-  let pendingSpace = false;
-  for (let i = 0; i < decomposed.length; i++) {
-    const ch = decomposed[i].toLowerCase();
-    if ((ch >= "a" && ch <= "z") || (ch >= "0" && ch <= "9")) {
-      if (pendingSpace && out.length) out.push(SPACE);
-      pendingSpace = false;
-      out.push(ch);
-    } else if (ch === " ") {
-      pendingSpace = true;
-    } else if (decomposed.codePointAt(i) < 0x300) {
-      // A non-combining non-alphanumeric (punctuation, symbols): treat like whitespace.
-      pendingSpace = true;
-    }
-    // Combining marks (0x300+) are dropped silently, not turned into a space.
-  }
-  return out.join("");
+  return String(input ?? "")
+    .normalize("NFD")
+    .replace(/\p{M}+/gu, "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, SPACE)
+    .trim();
 }
 
 /// Split folded text into words on runs of whitespace.

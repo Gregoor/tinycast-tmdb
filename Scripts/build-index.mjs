@@ -137,9 +137,13 @@ export async function buildIndexFromRecords(records, outPath, { supersededKeys =
   let blobTotal = 0;
   let pi = 0;
   for (let t = 0; t < sortedTerms.length; t++) {
+    // Encode here and measure BYTES: a term's UTF-16 length equals its UTF-8 length only while every
+    // character is ASCII, so accumulating code units corrupts the term table the moment a title folds
+    // to anything else (which is why the offsets silently held only for Latin text).
+    const encodedTerm = utf8Encode(sortedTerms[t]);
+    parts[t] = encodedTerm;
     termOffsets[t] = blobTotal;
-    parts[t] = sortedTerms[t];
-    blobTotal += sortedTerms[t].length;
+    blobTotal += encodedTerm.length;
     const list = termMap.get(sortedTerms[t]);
     list.sort((a, b) => a - b);
     let unique = 0;
@@ -160,7 +164,7 @@ export async function buildIndexFromRecords(records, outPath, { supersededKeys =
     for (let k = 0; k < list.length; k++) postingsFlat[w++] = list[k];
   }
 
-  const termsBlob = utf8Encode(parts.join(""));
+  const termsBlob = concat8(parts);
   parts.length = 0;
 
   // Pools (title, original, poster) + row records, built in one pass.

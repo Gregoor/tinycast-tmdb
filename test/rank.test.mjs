@@ -53,6 +53,11 @@ await expectFirst("city of god", "City of God (2002)");
 // Several films share this exact title, so assert the title rather than one year's entry.
 await expectFirst("war of the worlds", "War of the Worlds");
 await expectFirst("the silence of the lambs", "The Silence of the Lambs (1991)");
+// Non-Latin originals: folding used to treat every code point above U+0300 as a combining mark, so
+// a Japanese or Cyrillic title folded to nothing and was unsearchable however it was typed.
+await expectFirst("千と千尋", "Spirited Away (2001)");
+await expectFirst("Ночной дозор", "Night Watch (2004)");
+await expectFirst("Дневной дозор", "Day Watch (2006)");
 check("unknown query → empty", (await titles("zzzzqqqqxx", 5)).length === 0);
 
 // ── media type reaches the result (movie vs TV) ─────────────────────────────────────────────────
