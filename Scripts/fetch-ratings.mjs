@@ -13,6 +13,7 @@
 //                                        [--refresh-days=30] [--requests-per-second=5] [--out data]
 
 import { readStore, appendRecord } from "./store.mjs";
+import { inBand } from "./band.mjs";
 
 const API = "https://www.omdbapi.com/";
 const apiKey = process.env.OMDB_API_KEY;
@@ -33,11 +34,11 @@ const outDir = argValue("--out=") ?? "data";
 const top = Number(argValue("--top=") ?? 5000);
 const maxRequests = Number(argValue("--max-requests=") ?? 1000);
 const refreshDays = Number(argValue("--refresh-days=") ?? 30);
-// Rotten Tomatoes and Metacritic only review titles anyone has heard of. Measured against this
-// corpus, coverage runs 94% above 10k votes, 31% at 50-100, ~20% at 10-50 and effectively zero below
-// that — where ~1.4M of the 1.48M records sit. Without a floor the pass would spend whole days of
-// quota on titles those sites have never scored.
-const minVotes = Number(argValue("--min-votes=") ?? 10);
+// Target exactly what the published index holds (Scripts/band.mjs): Rotten Tomatoes and Metacritic
+// only review titles anyone has heard of, so spending quota on the 1.33M records the index leaves out
+// buys nothing — neither a score nor a search result. Derived from the band rather than a separate
+// threshold, because a floor of its own disagreed with it: it skipped recent titles that a first score
+// could still arrive for.
 const rps = Number(argValue("--requests-per-second=") ?? 5);
 const DAY = 24 * 60 * 60 * 1000;
 const now = Date.now();
@@ -46,7 +47,16 @@ const thisYear = new Date().getFullYear();
 // A score only really moves while a title is new — reviews keep arriving for a couple of years, then
 // it is effectively frozen. So recent releases go stale sooner, and the budget lands where change is.
 const staleAfter = (rec) => ((rec.year ?? 0) >= thisYear - 2 ? Math.max(1, refreshDays / 4) : refreshDays);
-const isStale = (rec) => !rec.ratingsAt || rec.ratingsAt < now - staleAfter(rec) * DAY;
+
+// A score can only change if there is one, or if the title is new enough that a first one may still
+// arrive. OMDb has never scored most of this corpus and never will — a 2004 film it passed on is not
+// going to acquire a Metacritic — so re-asking every enriched record monthly spends the entire quota
+// re-discovering nothing. Measured: re-asking all 563,782 enriched records needs ~21k requests/day;
+// asking only what can change needs ~5k.
+const canChange = (rec) =>
+  rec.rtScore != null || rec.metacriticScore != null || (rec.year ?? 0) >= thisYear - 1;
+const isStale = (rec) =>
+  !rec.ratingsAt || (canChange(rec) && rec.ratingsAt < now - staleAfter(rec) * DAY);
 
 const store = readStore(outDir);
 
@@ -57,7 +67,7 @@ const store = readStore(outDir);
 // budget re-checked the same popular titles for ever and never reached the tail.
 const queue = [...store.entries()]
   .filter(([, rec]) => (rec.imdbId ?? "").trim())
-  .filter(([, rec]) => (rec.voteCount ?? 0) >= minVotes)
+  .filter(([, rec]) => inBand(rec))
   .filter(([, rec]) => isStale(rec))
   .sort((a, b) => {
     const aRated = a[1].ratingsAt ?? 0;
@@ -68,8 +78,8 @@ const queue = [...store.entries()]
   })
   .slice(0, top);
 
-const belowFloor = [...store.values()].filter((r) => (r.voteCount ?? 0) < minVotes).length;
-console.log(`store ${store.size}; ${belowFloor} below ${minVotes} votes (skipped); candidates ${queue.length}; budget ${maxRequests}`);
+const outsideBand = [...store.values()].filter((r) => !inBand(r)).length;
+console.log(`store ${store.size}; ${outsideBand} outside the index band (skipped); candidates ${queue.length}; budget ${maxRequests}`);
 if (process.argv.includes("--dry-run")) {
   for (const [recordKey, rec] of queue.slice(0, 10)) {
     const state = rec.ratingsAt ? `rated ${Math.round((now - rec.ratingsAt) / DAY)}d ago` : "unrated";

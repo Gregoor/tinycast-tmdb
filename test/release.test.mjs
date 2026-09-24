@@ -85,30 +85,39 @@ const check = (label, ok, extra = "") => {
   const records = [
     rec({ id: 1, title: "unrated low", imdbId: "tt0000001", voteCount: 50 }),
     rec({ id: 2, title: "unrated high", imdbId: "tt0000002", voteCount: 900 }),
-    rec({ id: 3, title: "rated fresh", imdbId: "tt0000003", voteCount: 999, ratingsAt: now - 1 * DAY }),
-    rec({ id: 4, title: "rated old", imdbId: "tt0000004", voteCount: 20, ratingsAt: now - 90 * DAY }),
-    rec({ id: 5, title: "rated older", imdbId: "tt0000005", voteCount: 15, ratingsAt: now - 200 * DAY }),
+    // A score that exists is worth re-checking, so these two carry one.
+    rec({ id: 3, title: "scored fresh", imdbId: "tt0000003", voteCount: 999, rtScore: 70, ratingsAt: now - 1 * DAY }),
+    rec({ id: 4, title: "scored old", imdbId: "tt0000004", voteCount: 20, rtScore: 70, ratingsAt: now - 90 * DAY }),
+    rec({ id: 5, title: "scored older", imdbId: "tt0000005", voteCount: 15, rtScore: 70, ratingsAt: now - 200 * DAY }),
     rec({ id: 6, title: "no imdb id", imdbId: "", voteCount: 99999 }),
-    rec({ id: 7, title: "below the floor", imdbId: "tt0000007", voteCount: 3 }),
+    rec({ id: 7, title: "outside the band", imdbId: "tt0000007", voteCount: 3, year: 2000 }),
+    // Asked, answered with nothing, and old: OMDb is never going to score a 1990 film it passed on.
+    rec({ id: 8, title: "old and unscored", imdbId: "tt0000008", voteCount: 500, year: 1990, ratingsAt: now - 90 * DAY }),
+    // Asked and unscored, but recent, so a first score could still arrive.
+    rec({ id: 9, title: "recent and unscored", imdbId: "tt0000009", voteCount: 1, year: new Date().getFullYear(), ratingsAt: now - 90 * DAY }),
   ];
   writeFileSync(join(dir, "records.ndjson"), records.map((r) => JSON.stringify(r)).join("\n") + "\n");
 
   const out = execFileSync("node", ["Scripts/fetch-ratings.mjs", `--out=${dir}`, "--top=100",
-    "--refresh-days=30", "--min-votes=10", "--dry-run"],
+    "--refresh-days=30", "--dry-run"],
     { encoding: "utf8", env: { ...process.env, OMDB_API_KEY: "dry-run" } });
   // Plan lines are `<key>  votes <n>  <year>  <state>`; the summary line also mentions votes.
   const plan = out.split("\n").filter((l) => /^\s*(movie|tv):\d+\s+votes/.test(l))
     .map((l) => l.trim().split(/\s+/)[0]);
-  const summary = out.split("\n").find((l) => l.includes("below 10 votes")) ?? "";
+  const summary = out.split("\n").find((l) => l.includes("outside the index band")) ?? "";
 
   check("unrated records come first, most-voted first",
     plan.slice(0, 2).join(",") === "movie:2,movie:1", plan.join(","));
-  check("then rated ones, stalest first",
-    plan.slice(2).join(",") === "movie:5,movie:4", plan.join(","));
-  check("a freshly-rated record is left alone", !plan.includes("movie:3"), plan.join(","));
+  check("then scored ones, stalest first",
+    plan.slice(2, 4).join(",") === "movie:5,movie:4", plan.join(","));
+  check("a recent title with no score is re-checked (a first score may arrive)",
+    plan.includes("movie:9"), plan.join(","));
+  check("an old title OMDb never scored is never asked again",
+    !plan.includes("movie:8"), plan.join(","));
+  check("a freshly-scored record is left alone", !plan.includes("movie:3"), plan.join(","));
   check("a record with no IMDb id is never asked about", !plan.includes("movie:6"), plan.join(","));
-  check("a record below the vote floor is skipped", !plan.includes("movie:7"), plan.join(","));
-  check("the skipped count is reported", /1,?353|2 below/.test(summary) || summary.includes("below 10 votes"), summary);
+  check("a record outside the index band is never asked about", !plan.includes("movie:7"), plan.join(","));
+  check("the skipped count is reported", summary.includes("outside the index band"), summary);
 }
 
 // ── the band the published index covers ─────────────────────────────────────────────────────────

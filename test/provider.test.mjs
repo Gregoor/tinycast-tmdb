@@ -161,8 +161,8 @@ check("scores render in the configured order",
 
 // A title with no score from its own list falls back, so it shows something rather than nothing.
 const tvFallback = await core.search("game of thrones", 3);
-check("a TV show with only an IMDb rating falls back to it",
-  tvFallback[0]?.subtitle === "2011 · imdb 9.3", String(tvFallback[0]?.subtitle));
+check("a TV show with only an IMDb rating falls back to it, starred",
+  tvFallback[0]?.subtitle === "2011 · \u{2B50} 9.3", String(tvFallback[0]?.subtitle));
 check("...and a movie with RT and Metacritic shows no fallback alongside them",
   (byDisplay[0]?.subtitle ?? "").includes("imdb") === false, String(byDisplay[0]?.subtitle));
 

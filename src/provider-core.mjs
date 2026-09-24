@@ -51,7 +51,7 @@ function scoreText(source, value) {
   if (source === "metacritic") {
     return `${value >= 61 ? "\u{1F7E2}" : value >= 40 ? "\u{1F7E1}" : "\u{1F534}"} ${value}`;
   }
-  if (source === "imdb") return `imdb ${(value / 10).toFixed(1)}`;
+  if (source === "imdb") return `\u{2B50} ${(value / 10).toFixed(1)}`;
   return "";
 }
 
