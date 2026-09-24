@@ -14,6 +14,7 @@ import { foldText, tokenize } from "../src/movies/normalize.mjs";
 import { serializeIndex, ratingByte } from "../src/db/index-format.mjs";
 import { utf8Encode } from "../src/db/utf8.mjs";
 import { readStore, key, forEachLine } from "./store.mjs";
+import { inBand, MIN_VOTES, RECENT_YEARS } from "./band.mjs";
 
 /// Parse `tt1234567` (or the literal "None" the API sometimes returns) to its numeric part, or 0.
 function imdbNum(imdb) {
@@ -60,7 +61,15 @@ export async function buildIndexMain(storeDir, outPath, { verbose = true } = {})
     console.warn(`no ${exportPath} — building unfiltered, so removed ids will be included`);
   }
 
-  return buildIndexFromRecords(kept, outPath, { verbose });
+  // Then the band: the index is what a client downloads and holds resident, so it carries what anyone
+  // would search rather than all 1.48M records. See Scripts/band.mjs for the measurement behind it.
+  const indexed = kept.filter((record) => inBand(record));
+  if (verbose) {
+    console.log(`band: ${indexed.length} rows kept, ${kept.length - indexed.length} left out ` +
+      `(under ${MIN_VOTES} votes and not released in the last ${RECENT_YEARS} years)`);
+  }
+
+  return buildIndexFromRecords(indexed, outPath, { verbose });
 }
 
 /// Build an index from an explicit record list. `supersededKeys` marks stable keys this file

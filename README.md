@@ -52,6 +52,50 @@ Scripts/publish.mjs                           rolling `latest` release + manifes
 Popularity drift is deliberately not an update: the index stores it, but scoring never reads it, so
 emitting it would churn the deltas for nothing.
 
+## What the index covers
+
+The **store** is complete — every record ships in `store.ndjson.gz` — but the **index** is what a
+client downloads and holds resident, so it carries what anyone would search rather than all 1.48M
+records (`Scripts/band.mjs`):
+
+```
+anything with >= 10 votes, or released this year or last with >= 1 vote
+```
+
+Measured against this corpus: 150,699 rows kept, 1,329,526 left out — and **not one of the dropped
+records had a Rotten Tomatoes score**, because RT/Metacritic only review titles that have an audience.
+The index falls from 189.9 MB to 20.7 MB, the loader's resident set from ~150 MB to ~60 MB, and query
+p99 from 42 ms to 8 ms.
+
+The one-vote floor on recent titles is what separates a genuine new release from the long tail of
+zero-vote entries the export adds daily — 114k of those arrived in the last two years alone, so plain
+recency would have been far too broad. Dropping a record here is reversible and costs nothing: the
+store keeps it, so a later base rebuild can bring it back.
+
+## Ratings
+
+Three sources, stored per row as three bytes in the index (256 = absent):
+
+| source | how | coverage |
+|---|---|---|
+| IMDb | their bulk `title.ratings.tsv.gz`, 8.7 MB/day, no key, no rate limit | ~100% of records with an IMDb id |
+| Rotten Tomatoes | OMDb, one title at a time | ~5% of films, ~0% of series |
+| Metacritic | OMDb, same call | ~4% of films, ~0% of series |
+
+OMDb's Metascore is movie-only — it returns `N/A` for series that Metacritic plainly scores — and its
+RT/Metacritic data reaches only the prominent few thousand, so **IMDb is the rating actually available
+for the corpus**. `Scripts/fetch-ratings.mjs` therefore spends its quota only where RT/Metacritic can
+exist, weighted by vote count and floored at 10 votes.
+
+A row shows `rt` for both media types with `imdb` behind it as a fallback; any combination, in any
+order, is configurable in the provider's cache at `~/Library/Caches/tinycast-root-search/movies/config.json`:
+
+```json
+{ "ratings": { "movie": ["rt", "metacritic"], "tv": ["rt"], "fallback": ["imdb"] } }
+```
+
+An edit applies on the next palette open.
+
 ## Deltas and updates
 
 A day's delta is **an index in the same format** — no binary patch, no LSM. It carries the records

@@ -13,6 +13,10 @@ import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
 
 import { buildManifest, decideMode, nextDeltas, BASE_REBUILD_DELTAS } from "../Scripts/manifest.mjs";
+import { inBand, MIN_VOTES, RECENT_YEARS } from "../Scripts/band.mjs";
+import { buildIndexMain } from "../Scripts/build-index.mjs";
+import { MovieIndex } from "../src/db/loader.mjs";
+import { openNodeReader } from "../src/db/loaders.mjs";
 
 let pass = 0;
 let fail = 0;
@@ -105,6 +109,41 @@ const check = (label, ok, extra = "") => {
   check("a record with no IMDb id is never asked about", !plan.includes("movie:6"), plan.join(","));
   check("a record below the vote floor is skipped", !plan.includes("movie:7"), plan.join(","));
   check("the skipped count is reported", /1,?353|2 below/.test(summary) || summary.includes("below 10 votes"), summary);
+}
+
+// ── the band the published index covers ─────────────────────────────────────────────────────────
+// A deliberate content decision, not an optimisation detail: it is why the base is 20.7 MB instead of
+// 190 MB, and what it leaves out is a title under MIN_VOTES that is older than RECENT_YEARS.
+{
+  const Y = 2026; // injected, so the rule is testable without waiting for the calendar
+  check(`exactly ${MIN_VOTES} votes is in`, inBand({ voteCount: MIN_VOTES, year: 1990 }, { year: Y }));
+  check("...one fewer is out", !inBand({ voteCount: MIN_VOTES - 1, year: 1990 }, { year: Y }));
+  check("a release from this year with a single vote is in",
+    inBand({ voteCount: 1, year: Y }, { year: Y }));
+  check(`...as is last year's`, inBand({ voteCount: 1, year: Y - RECENT_YEARS + 1 }, { year: Y }));
+  check("...but one older than that is out",
+    !inBand({ voteCount: 1, year: Y - RECENT_YEARS }, { year: Y }));
+  // The export adds zero-vote entries daily; keeping them is what made plain recency too broad.
+  check("a recent title nobody has seen is out", !inBand({ voteCount: 0, year: Y }, { year: Y }));
+  check("a missing vote count counts as none", !inBand({ title: "no votes field" }, { year: Y }));
+
+  // The builders must apply it — a predicate nothing uses would guard nothing.
+  const bdir = resolve(tmpdir(), "tmdb-band");
+  rmSync(bdir, { recursive: true, force: true });
+  mkdirSync(bdir, { recursive: true });
+  const rows = [
+    { mediaType: "movie", id: 1, title: "Popular", originalTitle: "Popular", year: 1999, voteCount: 500, posterPath: "" },
+    { mediaType: "movie", id: 2, title: "Recent", originalTitle: "Recent", year: Y, voteCount: 1, posterPath: "" },
+    { mediaType: "movie", id: 3, title: "Obscure", originalTitle: "Obscure", year: 1999, voteCount: 2, posterPath: "" },
+  ];
+  writeFileSync(join(bdir, "records.ndjson"), rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
+  writeFileSync(join(bdir, "id-export.ndjson"),
+    rows.map((r) => JSON.stringify({ mediaType: r.mediaType, id: r.id, adult: false })).join("\n") + "\n");
+  const bpath = resolve(bdir, "base.index");
+  await buildIndexMain(bdir, bpath, { verbose: false });
+  const built = new MovieIndex({ reader: await openNodeReader(bpath) });
+  await built.open();
+  check("a base built through the builder holds only in-band rows", built.rowCount === 2, String(built.rowCount));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

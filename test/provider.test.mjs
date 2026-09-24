@@ -91,15 +91,15 @@ check("a title-only match doesn't repeat the title as a keyword",
 const byOriginal = await core.search("mala educación", 3);
 check("a query matching the original title leads with it",
   byOriginal[0]?.title === "La mala educación", String(byOriginal[0]?.title));
-check("...dims the localized title, year and both movie scores behind it",
-  byOriginal[0]?.subtitle === "Bad Education · 2004 · \u{1F345} 86% · \u{1F7E2} 78", String(byOriginal[0]?.subtitle));
+check("...dims the localized title, year and score behind it",
+  byOriginal[0]?.subtitle === "Bad Education · 2004 · \u{1F345} 86%", String(byOriginal[0]?.subtitle));
 check("...and keeps the localized title searchable",
   byOriginal[0]?.keywords?.[0] === "Bad Education", JSON.stringify(byOriginal[0]?.keywords));
 const byDisplay = await core.search("bad education", 3);
 check("a query matching the display title still leads with it",
   byDisplay[0]?.title === "Bad Education", String(byDisplay[0]?.title));
-check("...dims the original title and both scores behind it",
-  byDisplay[0]?.subtitle === "La mala educación · 2004 · \u{1F345} 86% · \u{1F7E2} 78", String(byDisplay[0]?.subtitle));
+check("...dims the original title and score behind it",
+  byDisplay[0]?.subtitle === "La mala educación · 2004 · \u{1F345} 86%", String(byDisplay[0]?.subtitle));
 check("...and keeps the original title searchable",
   byDisplay[0]?.keywords?.[0] === "La mala educación", JSON.stringify(byDisplay[0]?.keywords));
 check("the delta's version wins over the base", results[0]?.title === "The Matrix Resurrections",

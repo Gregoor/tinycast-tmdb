@@ -11,12 +11,20 @@ import { searchMovies } from "./movies/search.mjs";
 import { foldTitle } from "./movies/normalize.mjs";
 
 /// Which scores a row shows, per media type, in the order given — plus a fallback list used only
-/// when the media type's own list has nothing for that title, so a film only IMDb has rated still
-/// shows a number rather than nothing. A provider cannot read Tinycast's preferences yet, so this
-/// comes from a config file in the provider's own cache:
-///   { "ratings": { "movie": ["rt","metacritic"], "tv": ["metacritic"], "fallback": ["imdb"] } }
+/// when the media type's own list has nothing for that title, so a title only IMDb has rated still
+/// shows a number rather than nothing.
+///
+/// Rotten Tomatoes leads for both, with IMDb behind it, because that is what the data supports: OMDb
+/// carries no Metacritic for series at all (12 of 84,558 enriched shows have one, where Metacritic
+/// scores Succession, The Bear and Chernobyl alike), and its RT/Metacritic for films reach only ~5% of
+/// what we hold — the prominent few thousand. IMDb is the one rating available for essentially every
+/// record. Metacritic remains available; this is a default, not a limit.
+///
+/// A provider cannot read Tinycast's preferences yet, so this comes from a config file in the
+/// provider's own cache — any combination, in any order:
+///   { "ratings": { "movie": ["rt","metacritic"], "tv": ["rt"], "fallback": ["imdb"] } }
 /// Values are "rt", "metacritic" and "imdb"; an empty list shows no score.
-const DEFAULT_RATINGS = { movie: ["rt", "metacritic"], tv: ["metacritic"], fallback: ["imdb"] };
+const DEFAULT_RATINGS = { movie: ["rt"], tv: ["rt"], fallback: ["imdb"] };
 
 function readRatingsPreference(fs, cacheDir, log) {
   const path = `${cacheDir}/config.json`;

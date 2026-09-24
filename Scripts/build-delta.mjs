@@ -13,6 +13,7 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { buildIndexFromRecords } from "./build-index.mjs";
 import { stableKey, key as recordKey, readStore, forEachLine } from "./store.mjs";
+import { inBand } from "./band.mjs";
 
 const dir = resolve(process.argv[2] ?? "data");
 const out = resolve(process.argv[3] ?? "build/delta.index");
@@ -41,7 +42,9 @@ for (const [k, rec] of latest) {
     // Gone from the export: supersede the key and ship no replacement, whether or not it was touched.
     superseded.add(stableKey(rec.mediaType, rec.id));
   } else if ((rec.fetchedAt ?? 0) > since) {
-    touched.push(rec);
+    // Supersede it either way — if it was in the base the client must drop the stale row — but only
+    // ship it if the base would hold it, so a delta cannot smuggle in rows the base excludes.
+    if (inBand(rec)) touched.push(rec);
     superseded.add(stableKey(rec.mediaType, rec.id));
   }
 }
