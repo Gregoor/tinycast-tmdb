@@ -96,6 +96,10 @@ check("...and keeps the localized title searchable",
 const byDisplay = await core.search("bad education", 3);
 check("a query matching the display title still leads with it",
   byDisplay[0]?.title === "Bad Education", String(byDisplay[0]?.title));
+check("...dims the original title behind it",
+  byDisplay[0]?.subtitle === "La mala educación · 2004", String(byDisplay[0]?.subtitle));
+check("...and keeps the original title searchable",
+  byDisplay[0]?.keywords?.[0] === "La mala educación", JSON.stringify(byDisplay[0]?.keywords));
 check("the delta's version wins over the base", results[0]?.title === "The Matrix Resurrections",
   String(results[0]?.title));
 check("first search downloaded manifest + base + delta",

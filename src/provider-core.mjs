@@ -8,6 +8,7 @@ import { syncIndexes } from "./db/index-sync.mjs";
 import { openRuntimeReader } from "./db/runtime-reader.mjs";
 import { MovieIndex } from "./db/loader.mjs";
 import { searchMovies } from "./movies/search.mjs";
+import { foldTitle } from "./movies/normalize.mjs";
 
 /// How long an open index set is trusted before the manifest is checked again. The provider session
 /// is resident for the app's lifetime, so without this a launch would never see a later delta — and
@@ -72,23 +73,23 @@ export function createProviderCore({
 
 function toCandidate(movie) {
   const original = movie.originalTitle;
-  // Found by its original title: lead with that title so the row shows what was matched, and keep the
-  // localized title dimmed behind it. Otherwise the display title leads, as it always did.
+  // A row leads with whichever title the query matched and dims the other behind it, so what matched
+  // is visible either way round. Folded-equal titles ("Marter" / "MARTER") are the same title and dim
+  // nothing, which keeps English-language results showing the year alone.
   const leads = Boolean(movie.matchedOriginal && original);
   const name = leads ? original : movie.title;
-  const other = leads ? movie.title : original;
-  // Only when the row leads with the original does the localized title ride behind it; otherwise the
-  // subtitle is the year alone, as before.
-  const subtitle = leads
-    ? [other, movie.year != null ? movie.year : null].filter((part) => part != null && part !== "").join(" · ")
-    : (movie.year != null ? String(movie.year) : "");
+  const alternate = leads ? movie.title : original;
+  const differs = Boolean(alternate) && foldTitle(alternate) !== foldTitle(name);
+  const parts = [];
+  if (differs) parts.push(alternate);
+  if (movie.year != null) parts.push(String(movie.year));
   return {
     // The id carries the media type so activation can route to the right popfeed path.
     id: `${movie.mediaType}:${movie.tmdbID}`,
     title: name,
-    subtitle: subtitle || undefined,
+    subtitle: parts.join(" · ") || undefined,
     // Whichever title isn't the row's name stays searchable.
-    keywords: other && other !== name ? [other] : [],
+    keywords: differs ? [alternate] : [],
     posterURL: movie.posterURL ?? undefined,
     label: movie.mediaType === "tv" ? "TV Show" : "Movie",
   };
