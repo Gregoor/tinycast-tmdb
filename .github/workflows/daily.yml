@@ -9,8 +9,7 @@ name: Daily index
 on:
   schedule:
     # TMDB publishes the exports by ~08:00 UTC; 09:00 leaves an hour of slack.
-    - cron: "0 9 * * *" # daily delta
-    - cron: "30 9 * * 0" # Sunday: rebuild the base
+    - cron: "0 9 * * *"
   workflow_dispatch:
     inputs:
       mode:
@@ -67,14 +66,21 @@ jobs:
       - name: Decide delta vs base
         id: mode
         run: |
-          # A cold cache carries no `published.json` marker, so there is nothing to diff a delta
-          # against — without this the first run would ship the entire corpus as a "delta".
-          if [ "${{ github.event.schedule }}" = "30 9 * * 0" ] \
-            || [ "${{ inputs.mode }}" = "base" ] \
-            || [ ! -f data/published.json ]; then
-            echo "mode=base" >> "$GITHUB_OUTPUT"
+          # A base is 199 MB and every client re-downloads it, so it is rebuilt only when it must be:
+          # on a cold cache (no `published.json`, so there is nothing to diff against), on request, or
+          # once the delta chain has grown long enough to be worth compacting. A delta can only be
+          # applied to the base it was built on, so this cadence is what a client's download costs —
+          # weekly would be ~4 GB/year per client, monthly ~2.4 GB, and a day is ~1 MB.
+          DELTAS=$(curl -sL --max-time 60 \
+            "https://github.com/${{ github.repository }}/releases/latest/download/manifest.json" \
+            | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('deltas') or []))" \
+            2>/dev/null || echo 0)
+          if [ ! -f data/published.json ]; then
+            echo "mode=base" >> "$GITHUB_OUTPUT"; echo "cold cache — no marker to diff a delta against"
+          elif [ "${{ inputs.mode }}" = "base" ] || [ "${DELTAS:-0}" -ge 30 ]; then
+            echo "mode=base" >> "$GITHUB_OUTPUT"; echo "${DELTAS} deltas accumulated — compacting"
           else
-            echo "mode=delta" >> "$GITHUB_OUTPUT"
+            echo "mode=delta" >> "$GITHUB_OUTPUT"; echo "${DELTAS} deltas so far — adding another"
           fi
 
       - name: Download today's ID export
