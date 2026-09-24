@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
 
 import { buildIndexFromRecords } from "../Scripts/build-index.mjs";
-import { readStore, appendRecord } from "../Scripts/store.mjs";
+import { readStore, appendRecord, forEachLine } from "../Scripts/store.mjs";
 import { MovieIndex } from "../src/db/loader.mjs";
 import { openNodeReader } from "../src/db/loaders.mjs";
 import { searchMovies } from "../src/movies/search.mjs";
@@ -118,6 +118,25 @@ const open = async (path) => {
     store.get("movie:1")?.title);
   check("...and the count is unchanged", store.size === 3, String(store.size));
   check("an empty store reads as empty", readStore(resolve(dir, "absent")).size === 0);
+
+  // forEachLine is the primitive every tool reads big files through — the export as well as the store
+  // — so it is exercised the same way, at every chunk size, including mid-character splits.
+  const collected = [];
+  for (let chunkBytes = 1; chunkBytes <= 8; chunkBytes++) {
+    const lines = [];
+    forEachLine(join(sdir, "records.ndjson"), (line) => lines.push(line), { chunkBytes });
+    collected.push(lines.length);
+  }
+  check("forEachLine yields every line at every chunk size", collected.every((n) => n === collected[0]), collected.join(","));
+  check("...in order, and trimmed", (() => {
+    const lines = [];
+    forEachLine(join(sdir, "records.ndjson"), (l) => lines.push(l), { chunkBytes: 3 });
+    return lines.every((l) => l === l.trim() && l.startsWith("{"));
+  })());
+  check("a missing file yields nothing rather than throwing", (() => {
+    forEachLine(resolve(dir, "absent"), () => { throw new Error("should not be called"); });
+    return true;
+  })());
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -14,7 +14,7 @@
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { readStore, key, appendRecord } from "./store.mjs";
+import { readStore, key, appendRecord, forEachLine } from "./store.mjs";
 import { createClient, fetchInto, hasCredentials } from "./fetch.mjs";
 
 if (!hasCredentials()) {
@@ -36,13 +36,11 @@ const maxNew = Number(argValue("--max-new=") ?? 0); // 0 = all
 const rps = Number(argValue("--requests-per-second=") ?? 20);
 
 const exportEntries = [];
-for (const raw of readFileSync(resolve(outDir, "id-export.ndjson"), "utf8").split("\n")) {
-  const line = raw.trim();
-  if (!line) continue;
+forEachLine(resolve(outDir, "id-export.ndjson"), (line) => {
   const parsed = JSON.parse(line);
-  if (parsed.adult) continue; // family-safe surfaces only, same rule as the backfill
+  if (parsed.adult) return; // family-safe surfaces only, same rule as the backfill
   exportEntries.push(parsed);
-}
+});
 
 const store = readStore(outDir);
 console.log(`store has ${store.size}; export has ${exportEntries.length}`);

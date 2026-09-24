@@ -13,7 +13,7 @@ import { resolve, dirname } from "node:path";
 import { foldText, tokenize } from "../src/movies/normalize.mjs";
 import { serializeIndex, ratingByte } from "../src/db/index-format.mjs";
 import { utf8Encode } from "../src/db/utf8.mjs";
-import { readStore, key } from "./store.mjs";
+import { readStore, key, forEachLine } from "./store.mjs";
 
 /// Parse `tt1234567` (or the literal "None" the API sometimes returns) to its numeric part, or 0.
 function imdbNum(imdb) {
@@ -50,12 +50,10 @@ export async function buildIndexMain(storeDir, outPath, { verbose = true } = {})
   let kept = records;
   if (existsSync(exportPath)) {
     const live = new Set();
-    for (const raw of readFileSync(exportPath, "utf8").split("\n")) {
-      const line = raw.trim();
-      if (!line) continue;
+    forEachLine(exportPath, (line) => {
       const e = JSON.parse(line);
       live.add(key(e.mediaType, e.id));
-    }
+    });
     kept = records.filter((r) => live.has(key(r.mediaType, r.id)));
     if (verbose) console.log(`export lists ${live.size}; dropping ${records.length - kept.length} removed`);
   } else if (verbose) {

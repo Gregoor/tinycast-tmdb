@@ -12,7 +12,7 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { buildIndexFromRecords } from "./build-index.mjs";
-import { stableKey, key as recordKey } from "./store.mjs";
+import { stableKey, key as recordKey, readStore, forEachLine } from "./store.mjs";
 
 const dir = resolve(process.argv[2] ?? "data");
 const out = resolve(process.argv[3] ?? "build/delta.index");
@@ -23,26 +23,15 @@ const markerPath = resolve(dir, "published.json");
 const marker = existsSync(markerPath) ? JSON.parse(readFileSync(markerPath, "utf8")) : {};
 const since = sinceArg ? Number(sinceArg.slice("--since=".length)) : Number(marker.since ?? 0);
 
-// Last-wins per key, so an updated record resolves to its newest line.
-const latest = new Map();
-for (const raw of readFileSync(resolve(dir, "records.ndjson"), "utf8").split("\n")) {
-  const line = raw.trim();
-  if (!line) continue;
-  const rec = JSON.parse(line);
-  latest.set(recordKey(rec.mediaType, rec.id), rec);
-}
+// Last-wins per key, through the same streaming reader every other tool uses.
+const latest = readStore(dir);
 
 // Today's export ids, to spot records that vanished (rare, but a deletion must supersede too).
 const liveExport = new Set();
-const exportPath = resolve(dir, "id-export.ndjson");
-if (existsSync(exportPath)) {
-  for (const raw of readFileSync(exportPath, "utf8").split("\n")) {
-    const line = raw.trim();
-    if (!line) continue;
-    const e = JSON.parse(line);
-    if (!e.adult) liveExport.add(recordKey(e.mediaType, e.id));
-  }
-}
+forEachLine(resolve(dir, "id-export.ndjson"), (line) => {
+  const e = JSON.parse(line);
+  if (!e.adult) liveExport.add(recordKey(e.mediaType, e.id));
+});
 
 const touched = [];
 const superseded = new Set();

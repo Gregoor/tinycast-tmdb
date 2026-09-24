@@ -30,17 +30,14 @@ export function storePath(dir) {
 
 /// Load every record into a Map keyed by `mediaType:id`. ~1.5M+1M records fit comfortably in a
 /// Node Map; this runs offline as a tool, not in the JSContext runtime.
-/// Read the store, last line wins per key.
+/// Stream a file line by line, trimmed, skipping blanks.
 ///
-/// Streamed rather than slurped: `readFileSync(path, "utf8")` cannot handle a file past Node's
-/// maximum string length (~512 MB), and the store passes that once a bulk enrichment lands — at which
-/// point every tool that reads it fails. Chunking also keeps the peak well below what a single
-/// half-gigabyte string costs. `StringDecoder` holds partial multi-byte characters across a chunk
-/// boundary, which is why it is here rather than `chunk.toString()`.
-export function readStore(dir, { chunkBytes = 1 << 20 } = {}) {
-  const path = storePath(dir);
-  const map = new Map();
-  if (!existsSync(path)) return map;
+/// Nothing here may depend on a whole file fitting in one string: that tops out around 512 MB, the
+/// store has already passed it, and the failure is not local — every tool that reads the store went
+/// down at the same moment. `StringDecoder` holds partial multi-byte characters across a chunk edge,
+/// which a plain `chunk.toString()` would corrupt.
+export function forEachLine(path, onLine, { chunkBytes = 1 << 20 } = {}) {
+  if (!existsSync(path)) return;
   const decoder = new StringDecoder("utf8");
   const fd = openSync(path, "r");
   const chunk = Buffer.alloc(chunkBytes);
@@ -55,24 +52,27 @@ export function readStore(dir, { chunkBytes = 1 << 20 } = {}) {
       const lines = text.split("\n");
       carry = lines.pop() ?? "";
       for (const line of lines) {
-        if (!line) continue;
-        const rec = JSON.parse(line);
-        map.set(key(rec.mediaType, rec.id), rec);
+        const trimmed = line.trim();
+        if (trimmed) onLine(trimmed);
       }
     }
     const tail = (carry + decoder.end()).trim();
-    if (tail) {
-      const rec = JSON.parse(tail);
-      map.set(key(rec.mediaType, rec.id), rec);
-    }
+    if (tail) onLine(tail);
   } finally {
     closeSync(fd);
   }
+}
+
+/// Read the store, last line wins per key.
+export function readStore(dir, options) {
+  const map = new Map();
+  forEachLine(storePath(dir), (line) => {
+    const rec = JSON.parse(line);
+    map.set(key(rec.mediaType, rec.id), rec);
+  }, options);
   return map;
 }
 
-/// Append one record; also returns the record for callers that want it. Never rewrites the file, so
-/// a kill mid-backfill keeps everything written so far.
 export function appendRecord(dir, record) {
   mkdirSync(dir, { recursive: true });
   appendFileSync(storePath(dir), JSON.stringify(record) + "\n", "utf8");
