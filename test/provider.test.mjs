@@ -90,15 +90,15 @@ check("a title-only match doesn't repeat the title as a keyword",
 const byOriginal = await core.search("mala educación", 3);
 check("a query matching the original title leads with it",
   byOriginal[0]?.title === "La mala educación", String(byOriginal[0]?.title));
-check("...dims the localized title, year and movie score behind it",
-  byOriginal[0]?.subtitle === "Bad Education · 2004 · \u{1F345} 86%", String(byOriginal[0]?.subtitle));
+check("...dims the localized title, year and both movie scores behind it",
+  byOriginal[0]?.subtitle === "Bad Education · 2004 · \u{1F345} 86% · \u{1F7E2} 78", String(byOriginal[0]?.subtitle));
 check("...and keeps the localized title searchable",
   byOriginal[0]?.keywords?.[0] === "Bad Education", JSON.stringify(byOriginal[0]?.keywords));
 const byDisplay = await core.search("bad education", 3);
 check("a query matching the display title still leads with it",
   byDisplay[0]?.title === "Bad Education", String(byDisplay[0]?.title));
-check("...dims the original title and the score behind it",
-  byDisplay[0]?.subtitle === "La mala educación · 2004 · \u{1F345} 86%", String(byDisplay[0]?.subtitle));
+check("...dims the original title and both scores behind it",
+  byDisplay[0]?.subtitle === "La mala educación · 2004 · \u{1F345} 86% · \u{1F7E2} 78", String(byDisplay[0]?.subtitle));
 check("...and keeps the original title searchable",
   byDisplay[0]?.keywords?.[0] === "La mala educación", JSON.stringify(byDisplay[0]?.keywords));
 check("the delta's version wins over the base", results[0]?.title === "The Matrix Resurrections",
@@ -145,10 +145,21 @@ const configured = createProviderCore({
   manifestURL: "https://example.test/movies/manifest.json", cacheDir, fs, download,
 });
 const byConfig = await configured.search("bad education", 3);
-check("config.json moves a movie's score to Metacritic (green at 78)",
+check("config.json narrows a movie to Metacritic alone, green at 78",
   byConfig[0]?.subtitle === "La mala educación · 2004 · \u{1F7E2} 78", String(byConfig[0]?.subtitle));
+// Order is the user's too, and an unlisted media type keeps the default.
+writeFileSync(join(cacheDir, "config.json"),
+  JSON.stringify({ ratings: { movie: ["metacritic", "rt"] } }));
+const reordered = createProviderCore({
+  manifestURL: "https://example.test/movies/manifest.json", cacheDir, fs, download,
+});
+const byOrder = await reordered.search("bad education", 3);
+check("scores render in the configured order",
+  byOrder[0]?.subtitle === "La mala educación · 2004 · \u{1F7E2} 78 · \u{1F345} 86%",
+  String(byOrder[0]?.subtitle));
+
 const tvByConfig = await configured.search("game of thrones", 3);
-check("...and a TV show's to IMDb when asked (0.1 precision)",
+check("...and orders a TV show's scores as asked",
   (tvByConfig[0]?.subtitle ?? "").endsWith("imdb") || tvByConfig[0]?.subtitle === "2011", String(tvByConfig[0]?.subtitle));
 
 // A failed download must answer nothing rather than throw (the resident session must survive).

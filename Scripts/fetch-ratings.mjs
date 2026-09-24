@@ -34,18 +34,43 @@ const top = Number(argValue("--top=") ?? 5000);
 const maxRequests = Number(argValue("--max-requests=") ?? 1000);
 const refreshDays = Number(argValue("--refresh-days=") ?? 30);
 const rps = Number(argValue("--requests-per-second=") ?? 5);
-const staleBefore = Date.now() - refreshDays * 24 * 60 * 60 * 1000;
+const DAY = 24 * 60 * 60 * 1000;
+const now = Date.now();
+const thisYear = new Date().getFullYear();
+
+// A score only really moves while a title is new — reviews keep arriving for a couple of years, then
+// it is effectively frozen. So recent releases go stale sooner, and the budget lands where change is.
+const staleAfter = (rec) => ((rec.year ?? 0) >= thisYear - 2 ? Math.max(1, refreshDays / 4) : refreshDays);
+const isStale = (rec) => !rec.ratingsAt || rec.ratingsAt < now - staleAfter(rec) * DAY;
 
 const store = readStore(outDir);
 
-// Only records OMDb can be asked about by id, most-voted first, skipping anything refreshed recently.
+// Only records OMDb can be asked about by id.
+//
+// Ordering serves two runs in one: records with no rating come first, most-voted first (the backfill),
+// then rated ones oldest-first (the refresh). Sorting the whole queue by votes would mean a bounded
+// budget re-checked the same popular titles for ever and never reached the tail.
 const queue = [...store.entries()]
   .filter(([, rec]) => (rec.imdbId ?? "").trim())
-  .filter(([, rec]) => !rec.ratingsAt || rec.ratingsAt < staleBefore)
-  .sort((a, b) => (b[1].voteCount ?? 0) - (a[1].voteCount ?? 0))
+  .filter(([, rec]) => isStale(rec))
+  .sort((a, b) => {
+    const aRated = a[1].ratingsAt ?? 0;
+    const bRated = b[1].ratingsAt ?? 0;
+    if ((aRated === 0) !== (bRated === 0)) return aRated === 0 ? -1 : 1;
+    if (aRated === 0) return (b[1].voteCount ?? 0) - (a[1].voteCount ?? 0);
+    return aRated - bRated;
+  })
   .slice(0, top);
 
 console.log(`store ${store.size}; candidates ${queue.length}; budget ${maxRequests} requests`);
+if (process.argv.includes("--dry-run")) {
+  for (const [recordKey, rec] of queue.slice(0, 10)) {
+    const state = rec.ratingsAt ? `rated ${Math.round((now - rec.ratingsAt) / DAY)}d ago` : "unrated";
+    console.log(`  ${recordKey.padEnd(14)} votes ${String(rec.voteCount ?? 0).padStart(6)}  ${String(rec.year ?? "-").padStart(4)}  ${state}`);
+  }
+  console.log(`  ...${queue.length - 10} more`);
+  process.exit(0);
+}
 
 /// "8.3" -> 83, "N/A"/absent -> null, so a score is one byte on disk.
 const score100 = (value) => {

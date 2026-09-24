@@ -10,18 +10,22 @@ import { MovieIndex } from "./db/loader.mjs";
 import { searchMovies } from "./movies/search.mjs";
 import { foldTitle } from "./movies/normalize.mjs";
 
-/// Which score a row shows, per media type. A provider cannot read Tinycast's preferences, so this
-/// comes from a config file in the provider's own cache:
-///   { "ratings": { "movie": "rt", "tv": "metacritic" } }
-/// Values are "rt", "metacritic", "imdb", or "none".
-const DEFAULT_RATINGS = { movie: "rt", tv: "metacritic" };
+/// Which scores a row shows, per media type, in the order given. A provider cannot read Tinycast's
+/// preferences yet, so this comes from a config file in the provider's own cache:
+///   { "ratings": { "movie": ["rt", "metacritic"], "tv": ["metacritic"] } }
+/// Values are "rt", "metacritic" and "imdb"; an empty list shows no score.
+const DEFAULT_RATINGS = { movie: ["rt", "metacritic"], tv: ["metacritic"] };
 
 function readRatingsPreference(fs, cacheDir, log) {
   const path = `${cacheDir}/config.json`;
   try {
     if (!fs.existsSync(path)) return DEFAULT_RATINGS;
-    const parsed = JSON.parse(fs.readFileSync(path, "utf8"));
-    return { ...DEFAULT_RATINGS, ...(parsed?.ratings ?? {}) };
+    const parsed = JSON.parse(fs.readFileSync(path, "utf8"))?.ratings ?? {};
+    const asList = (value) => (value == null ? undefined : Array.isArray(value) ? value : [value]);
+    return {
+      movie: asList(parsed.movie) ?? DEFAULT_RATINGS.movie,
+      tv: asList(parsed.tv) ?? DEFAULT_RATINGS.tv,
+    };
   } catch (error) {
     log(`config.json unreadable (${error?.message ?? error}) — using the defaults`);
     return DEFAULT_RATINGS;
@@ -30,17 +34,27 @@ function readRatingsPreference(fs, cacheDir, log) {
 
 /// A row's subtitle is one uniformly-styled string, so the band rides on the glyph: RT is two-state
 /// at its own 60% cutoff, Metacritic three-state at its own 61/40 thresholds.
-function ratingText(movie, ratings) {
-  const choice = ratings[movie.mediaType] ?? "none";
-  const value =
-    choice === "rt" ? movie.rtScore
-    : choice === "metacritic" ? movie.metacriticScore
-    : choice === "imdb" ? movie.imdbRating
-    : null;
+function scoreText(source, value) {
   if (value == null) return "";
-  if (choice === "rt") return `${value >= 60 ? "\u{1F345}" : "\u{1F4A5}"} ${value}%`;
-  if (choice === "metacritic") return `${value >= 61 ? "\u{1F7E2}" : value >= 40 ? "\u{1F7E1}" : "\u{1F534}"} ${value}`;
-  return `imdb ${(value / 10).toFixed(1)}`;
+  if (source === "rt") return `${value >= 60 ? "\u{1F345}" : "\u{1F4A5}"} ${value}%`;
+  if (source === "metacritic") {
+    return `${value >= 61 ? "\u{1F7E2}" : value >= 40 ? "\u{1F7E1}" : "\u{1F534}"} ${value}`;
+  }
+  if (source === "imdb") return `imdb ${(value / 10).toFixed(1)}`;
+  return "";
+}
+
+/// The chosen scores for a row, in the configured order, skipping sources with no score for it.
+function ratingTexts(movie, ratings) {
+  const chosen = ratings[movie.mediaType] ?? [];
+  return chosen
+    .map((source) =>
+      source === "rt" ? movie.rtScore
+      : source === "metacritic" ? movie.metacriticScore
+      : source === "imdb" ? movie.imdbRating
+      : null)
+    .map((value, i) => scoreText(chosen[i], value))
+    .filter((text) => text !== "");
 }
 
 /// How long an open index set is trusted before the manifest is checked again. The provider session
@@ -119,8 +133,7 @@ function toCandidate(movie, ratings) {
   const parts = [];
   if (differs) parts.push(alternate);
   if (movie.year != null) parts.push(String(movie.year));
-  const score = ratingText(movie, ratings);
-  if (score) parts.push(score);
+  parts.push(...ratingTexts(movie, ratings));
   return {
     // The id carries the media type so activation can route to the right popfeed path.
     id: `${movie.mediaType}:${movie.tmdbID}`,
