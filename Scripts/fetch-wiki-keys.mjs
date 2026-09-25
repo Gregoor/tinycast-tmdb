@@ -54,6 +54,9 @@ async function queryItems(urls, attempt = 0) {
         "Content-Type": "application/x-www-form-urlencoded",
       },
       body: new URLSearchParams({ query: sparql }).toString(),
+      // A shared endpoint under load will hold a socket open rather than answer: without this the whole
+      // pass stalls on one chunk, which is how it behaved before.
+      signal: AbortSignal.timeout(90_000),
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     return (await response.json()).results.bindings;
