@@ -96,6 +96,17 @@ more rows form, and **917 of them (37%) are differently named** — the merges a
 Only the head is mapped, because the work is bounded by requests to a shared public endpoint rather
 than by data: one 400-article chunk per request, so a 50k head across three languages is 375 requests.
 
+### The wiki band
+
+Each wiki's index is byte-budgeted too — a hundred megabytes, which lands around a million articles, one
+index per language. What counts as an article is namespace 0, since everything else is talk pages, users,
+templates and files; the one exception is Spanish `Anexo:` ("Appendix"), where that wiki keeps the pages
+English and German write as "List of …" in the main namespace — measured at 2.35% and 1.70% of their
+readership, so excluding it would drop a class of page the other bands carry.
+
+`Special:` / `Especial:` is namespace −1 and is deliberately not filtered, which is why `Especial:Buscar`
+appears among the Spanish band's rows.
+
 ## Ratings
 
 Three sources, stored per row as three bytes in the index (256 = absent):

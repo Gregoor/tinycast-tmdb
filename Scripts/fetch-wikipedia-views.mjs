@@ -42,6 +42,12 @@ const languageOf = (code) => {
 /// names for them — is not something a launcher should return, and the pageview dumps carry no
 /// namespace at all, so this has to be fetched per language and matched on the title's prefix.
 ///
+/// Namespaces whose pages a reader would still want as results, even though they are not the main one.
+/// Spanish keeps its list articles in `Anexo:` where English and German write the same page as "List of
+/// …" in namespace 0 — measured at 2.35% and 1.70% of those wikis' readership — so excluding Spanish's
+/// would drop a class of page the other two bands carry.
+const CONTENT_NAMESPACES = new Set(["Anexo", "Appendix"]);
+
 /// A colon alone proves nothing: "Star Trek: The Next Generation" is an article. Nor is a prefix
 /// enough on its own — a namespace name may contain a space, which the dumps write as an underscore.
 const UA = "tinycast-tmdb/0.1 (https://github.com/Gregoor/tinycast-tmdb)";
@@ -56,7 +62,7 @@ async function nonArticlePrefixes(lang) {
   for (const [key, ns] of Object.entries(data.query.namespaces)) {
     if (key === "0" || key === "-1") continue;
     for (const name of [ns["*"], ns.canonical]) {
-      if (name) prefixes.add(`${name.replaceAll(" ", "_")}:`);
+      if (name && !CONTENT_NAMESPACES.has(name)) prefixes.add(`${name.replaceAll(" ", "_")}:`);
     }
   }
   return prefixes;
