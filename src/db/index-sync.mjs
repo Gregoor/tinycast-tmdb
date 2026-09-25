@@ -4,10 +4,15 @@
 // hash differs from what is already on disk. So a launch is normally one small request, a day's
 // update costs only that day's delta, and only a base republish pulls the whole index again.
 //
+// Everything here is asynchronous, and awaited by its caller: the runtime is a single thread, so a
+// transfer that blocked would hold every query behind it.
+//
 // `fs`, `download` and `hash` are injected: the extension runtime backs them with its fs shim, curl
 // (a root-search provider may not fetch) and the crypto shim; tests back them with node equivalents.
 
-export function syncIndexes({ manifestURL, cacheDir, fs, download, gunzip, hash, now = Date.now, log = () => {} }) {
+export async function syncIndexes({
+  manifestURL, cacheDir, fs, download, gunzip, hash, now = Date.now, log = () => {},
+}) {
   // A provider that forgets this would download the compressed asset, fail to unpack it, and fall back
   // to the uncompressed one — paying for both, on every sync, to reach the same place.
   if (typeof gunzip !== "function") {
@@ -15,7 +20,7 @@ export function syncIndexes({ manifestURL, cacheDir, fs, download, gunzip, hash,
   }
   fs.mkdirSync(cacheDir, { recursive: true });
   const manifestPath = `${cacheDir}/manifest.json`;
-  download(manifestURL, manifestPath);
+  await download(manifestURL, manifestPath);
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
 
   const wanted = [manifest.base, ...(manifest.deltas ?? []), ...(manifest.files ?? [])].filter(Boolean);
@@ -44,11 +49,11 @@ export function syncIndexes({ manifestURL, cacheDir, fs, download, gunzip, hash,
       log(`downloading ${asset.name}`);
       const packed = `${local}.gz`;
       try {
-        download(dir + asset.name + ".gz", packed);
-        gunzip(packed, local);
+        await download(dir + asset.name + ".gz", packed);
+        await gunzip(packed, local);
       } catch {
         log(`${asset.name}.gz unavailable — falling back to the uncompressed asset`);
-        download(dir + asset.name, local);
+        await download(dir + asset.name, local);
       } finally {
         fs.rmSync(packed, { force: true });
       }
@@ -77,6 +82,10 @@ export function syncIndexes({ manifestURL, cacheDir, fs, download, gunzip, hash,
 /// a manifest per language through a spawned process. The freshness window has to outlive the session to
 /// mean anything, so `syncIndexes` records when it last looked and this reads it back. Nil means the
 /// cache is missing, incomplete, or old enough that the caller must sync first.
+/// `maxAgeMs: Infinity` asks whether anything is installed at all, which is what a mount wants before it
+/// syncs: a cache that is due a check still holds a valid band, and serving it beats answering nothing.
+/// A finite age additionally asks whether the check is recent, and a store that has never been checked
+/// cannot claim freshness.
 export function installedPaths({ cacheDir, fs, maxAgeMs, now = Date.now }) {
   const installedPath = `${cacheDir}/installed.json`;
   if (!fs.existsSync(installedPath)) return null;
@@ -86,7 +95,9 @@ export function installedPaths({ cacheDir, fs, maxAgeMs, now = Date.now }) {
   } catch {
     return null;
   }
-  if (!(installed?.checkedAt > 0) || now() - installed.checkedAt > maxAgeMs) return null;
+  if (Number.isFinite(maxAgeMs) && (!(installed?.checkedAt > 0) || now() - installed.checkedAt > maxAgeMs)) {
+    return null;
+  }
   const paths = Object.keys(installed.assets ?? {}).map((name) => `${cacheDir}/${name}`);
   // Deltas fold into a fresh base, so a file an older manifest named can be gone: mount only a set that
   // is all still there, and let a missing one send the caller through a full sync.

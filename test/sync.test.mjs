@@ -76,7 +76,7 @@ const fsShim = {
 
 // 1. First sync: base + one delta.
 publish(1, { base: true, deltas: ["delta-1.index"] });
-let paths = sync();
+let paths = await sync();
 check("returns base then deltas in order",
   paths.length === 2 && paths[0].endsWith("tmdb.index") && paths[1].endsWith("delta-1.index"),
   paths.join(" | "));
@@ -85,14 +85,14 @@ check("first sync downloads manifest + base + delta",
 
 // 2. Same manifest again: the manifest alone.
 downloads.length = 0;
-sync();
+await sync();
 check("unchanged manifest re-downloads nothing but the manifest",
   downloads.join(",") === "manifest.json", downloads.join(","));
 
 // 3. A day's delta arrives: only the new delta is fetched, not the base.
 downloads.length = 0;
 publish(2, { base: true, deltas: ["delta-1.index", "delta-2.index"] });
-paths = sync();
+paths = await sync();
 check("a new delta pulls only that delta",
   downloads.join(",") === "manifest.json,delta-2.index.gz", downloads.join(","));
 check("all three indexes reported",
@@ -101,7 +101,7 @@ check("all three indexes reported",
 // 4. A corrupt local file is refetched rather than served.
 downloads.length = 0;
 appendFileSync(join(cacheDir, "delta-1.index"), "garbage");
-sync();
+await sync();
 check("a corrupted index is refetched",
   downloads.join(",") === "manifest.json,delta-1.index.gz", downloads.join(","));
 
@@ -109,7 +109,7 @@ check("a corrupted index is refetched",
 downloads.length = 0;
 serve("tmdb.index", baseV2);
 publish(3, { base: true, deltas: [] });
-paths = sync();
+paths = await sync();
 check("a new base is fetched", downloads.includes("tmdb.index.gz"), downloads.join(","));
 check("deltas are not refetched on a base republish",
   !downloads.includes("delta-1.index.gz") && !downloads.includes("delta-2.index.gz"), downloads.join(","));
@@ -123,7 +123,7 @@ check("only the base remains", paths.length === 1 && paths[0].endsWith("tmdb.ind
 writeFileSync(join(cacheDir, "config.json"), JSON.stringify({ ratings: { movie: "rt" } }));
 serve("delta-2.index", readFileSync(join(serveDir, "delta-1.index"), "utf8"));
 publish(4, { base: true, deltas: ["delta-1.index", "delta-2.index"] });
-sync();
+await sync();
 check("a file we did not install survives a pruning sync",
   nodeFs.existsSync(join(cacheDir, "config.json")), nodeFs.readdirSync(cacheDir).join(","));
 check("...and it still holds the user's content",
@@ -133,7 +133,7 @@ check("...and it still holds the user's content",
 downloads.length = 0;
 rmSync(join(serveDir, "delta-1.index.gz"), { force: true });
 appendFileSync(join(cacheDir, "delta-1.index"), "garbage");
-sync();
+await sync();
 check("an asset with no .gz falls back to the uncompressed one",
   downloads.join(",") === "manifest.json,delta-1.index.gz,delta-1.index", downloads.join(","));
 check("...and installs it correctly",

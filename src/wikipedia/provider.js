@@ -171,45 +171,62 @@ export default function command() {
   /// search composes from the record's own id.
   const articles = new Map();
 
-  /// Mount the bands and the maps beside them. Never awaited by a query: a mount syncs and opens
-  /// hundreds of megabytes across three wikis, and the host's contract is that a cold provider answers
-  /// nothing while the next query answers — so the mount belongs to the provider's own background.
+  /// Open one wiki from whatever is installed — even a stale copy, which answers a query far better
+  /// than nothing does while a sync runs. That wiki's bands are replaced rather than added to, so a copy
+  /// a sync superseded cannot stay searched beside the one that replaced it.
+  async function install(language, corpus) {
+    const cacheDir = `${CACHE_DIR}/${language}`;
+    const paths = installedPaths({ cacheDir, fs, maxAgeMs: Infinity });
+    if (!paths) return false;
+    // A manifest carries the base index, whatever deltas are still in its chain, and the cross-language
+    // map beside them. The loader merges a list by stable key, keeping the newest version of each, so
+    // they are all opened — in the order the manifest names them, base first.
+    const indexes = paths.filter((path) => path.endsWith(".index"));
+    if (indexes.length === 0) return false;
+    const opened = [];
+    for (const path of indexes) {
+      opened.push(await new MovieIndex({ reader: openRuntimeReader(path, fs) }).open());
+    }
+    for (let at = corpus.bands.length - 1; at >= 0; at -= 1) {
+      if (corpus.bands[at].language === language) corpus.bands.splice(at, 1);
+    }
+    for (const index of opened) corpus.bands.push({ language, index });
+    const groupsPath = paths.find((path) => path.endsWith(".groups"));
+    const groups = groupsPath ? openGroups(fs.readFileSync(groupsPath)) : null;
+    if (groups) corpus.languageGroups.set(language, groups);
+    return true;
+  }
+
+  /// Mount every wiki. What is already on disk comes first, published as soon as the first wiki is up,
+  /// so a query arriving during a mount is answered instead of left cold. The syncs then run one wiki at
+  /// a time behind those queries, each replacing its own bands as it lands — and a sync that fails leaves
+  /// the copy already serving.
   async function mount() {
-    const bands = [];
-    const languageGroups = new Map();
+    const corpus = { bands: [], languageGroups: new Map() };
+    for (const language of LANGUAGES) {
+      if ((await install(language, corpus)) && !mounted) mounted = corpus;
+    }
     for (const language of LANGUAGES) {
       const cacheDir = `${CACHE_DIR}/${language}`;
-      // A mount is the first query of every palette session, and a manifest check is a spawned process
-      // per language, so a cache checked within REFRESH_MS mounts straight from disk.
-      const paths =
-        installedPaths({ cacheDir, fs, maxAgeMs: REFRESH_MS })
-        ?? syncIndexes({
+      // A cache checked within REFRESH_MS mounts straight from disk; anything else syncs first, which no
+      // longer holds a query because the transfer yields.
+      if (installedPaths({ cacheDir, fs, maxAgeMs: REFRESH_MS })) continue;
+      try {
+        await syncIndexes({
           manifestURL: `${MANIFEST_BASE}/wikipedia-${language}-manifest.json`,
           cacheDir,
           fs,
           download,
           gunzip,
         });
-      // A manifest carries the base index, whatever deltas are still in its chain, and the cross-language
-      // map beside them. The loader merges a list of indexes by stable key, keeping the newest version of
-      // each, so they are all opened — in the order the manifest names them, base first.
-      const indexes = paths.filter((path) => path.endsWith(".index"));
-      const groupsPath = paths.find((path) => path.endsWith(".groups"));
-      for (const path of indexes) {
-        bands.push({
-          language,
-          index: await new MovieIndex({ reader: openRuntimeReader(path, fs) }).open(),
-        });
+      } catch {
+        continue;
       }
-      const groups = groupsPath ? openGroups(fs.readFileSync(groupsPath)) : null;
-      if (groups) languageGroups.set(language, groups);
+      await install(language, corpus);
     }
-    return { bands, languageGroups };
+    return corpus;
   }
 
-  /// What is mounted, or nil while it is being built: the caller answers nothing rather than waiting.
-  /// Past the refresh window a re-mount runs in the background while the mounted set keeps serving, so
-  /// a republish is never a keystroke's problem either.
   function ensureIndexes() {
     if (!mounted || Date.now() - syncedAt >= REFRESH_MS) startMount();
     return mounted;

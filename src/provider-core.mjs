@@ -100,7 +100,7 @@ export function createProviderCore({
         // trip, so a cache checked within the refresh window mounts straight from disk.
         const paths =
           installedPaths({ cacheDir, fs, maxAgeMs: refreshMs, now })
-          ?? syncIndexes({ manifestURL, cacheDir, fs, download, gunzip, log, now });
+          ?? await syncIndexes({ manifestURL, cacheDir, fs, download, gunzip, log, now });
         const key = paths.join("|");
         // Unchanged manifest: keep the open set rather than re-reading the whole index.
         if (key === openPaths && indexes) return indexes;
