@@ -23,6 +23,7 @@
 // the runtime mounted across keystrokes — see RootSearchProviderHost.
 
 import { registerRootSearchProvider, open } from "@tinycast/api";
+import { download, gunzip } from "./transfer.mjs";
 import { createProviderCore, activationURL } from "./provider-core.mjs";
 
 const MANIFEST_URL =
@@ -33,19 +34,10 @@ if (!CACHE_DIR) {
   throw new Error("TINYCAST_PROVIDER_CACHE is unset — the host must say where the index belongs");
 }
 
-/// Fetch `url` to `path` through curl, writing beside the target and renaming so a failed or partial
-/// transfer never leaves a truncated index where the loader would open it.
-function download(url, path) {
-  const { execFileSync } = require("child_process");
-  const fs = require("fs");
-  execFileSync("/usr/bin/curl", ["-fsSL", "--retry", "3", url, "-o", `${path}.part`]);
-  fs.renameSync(`${path}.part`, path);
-}
-
 export default function command() {
   const fs = require("fs");
   const core = createProviderCore({
-    manifestURL: MANIFEST_URL, cacheDir: CACHE_DIR, fs, download, log: console.log,
+    manifestURL: MANIFEST_URL, cacheDir: CACHE_DIR, fs, download, gunzip, log: console.log,
   });
 
   registerRootSearchProvider({

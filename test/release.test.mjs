@@ -36,7 +36,7 @@ const check = (label, ok, extra = "") => {
     prev: { version: 4 },
     base: asset("tmdb.index"),
     deltas: [asset("delta-1.index")],
-    bundle: asset("provider.bundle.js"),
+    bundle: asset("movies.provider.js"),
     store: null,
   });
   check("the version advances", man.version === 5, String(man.version));

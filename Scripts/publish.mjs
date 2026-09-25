@@ -32,7 +32,7 @@ function argValue(flag) {
 const baseArg = argValue("--base=");
 const deltaArg = argValue("--delta=");
 const storeArg = argValue("--store=");
-const bundlePath = resolve(argValue("--bundle=") ?? "build/provider.bundle.js");
+const bundlePath = resolve(argValue("--bundle=") ?? "build/movies.provider.js");
 
 function gh(args, options = {}) {
   return execFileSync("gh", args, { stdio: "inherit", ...options });
@@ -43,6 +43,15 @@ function streamHash(path) {
   const fd = readFileSync(path); // artifacts are build outputs (tens of MB); fine to read whole
   hash.update(fd);
   return hash.digest("hex");
+}
+
+/// The wire artifact. The manifest names the file that gets installed and the bytes it holds; how it
+/// travels is this, its gzipped sibling — 12 MB instead of 21 for the base, 4.6 instead of 16 for the
+/// Wikipedia one, and that is most of what a client downloads.
+function gzipped(path) {
+  const target = `${path}.gz`;
+  execFileSync("/bin/sh", ["-c", `/usr/bin/gzip -9 -c '${path}' > '${target}'`]);
+  return target;
 }
 
 function assetInfo(path, name) {
@@ -74,15 +83,15 @@ const deltas = nextDeltas({
   isBase: Boolean(baseArg),
   adding: deltaArg ? [assetInfo(deltaArg, basename(deltaArg))] : [],
 });
-const bundle = assetInfo(bundlePath, "provider.bundle.js");
+const bundle = assetInfo(bundlePath, "movies.provider.js");
 const store = storeArg ? assetInfo(storeArg, "store.ndjson.gz") : prev?.store ?? null;
 
 const manifest = buildManifest({ prev, base, deltas, bundle, store });
 
 // Upload first, then the manifest — so a client never sees a manifest whose assets are missing.
 const uploads = [];
-if (baseArg) uploads.push(base.local);
-if (deltaArg) uploads.push(resolve(deltaArg));
+if (baseArg) uploads.push(gzipped(baseArg));
+if (deltaArg) uploads.push(gzipped(resolve(deltaArg)));
 uploads.push(bundle.local);
 if (storeArg) uploads.push(resolve(storeArg));
 gh(["release", "upload", TAG, ...uploads, "--clobber"]);
@@ -96,10 +105,11 @@ const keep = new Set([MANIFEST, base?.name, bundle.name, store?.name, ...deltas.
 const listed = execFileSync("gh", ["release", "view", TAG, "--json", "assets", "--jq", ".assets[].name"],
   { encoding: "utf8" }).split("\n").map((s) => s.trim()).filter(Boolean);
 for (const name of listed) {
-  if (!keep.has(name)) {
-    console.log(`pruning stale asset ${name}`);
-    gh(["release", "delete-asset", TAG, name, "-y"], { stdio: "ignore" });
-  }
+  // The Wikipedia publisher shares this release and prunes its own assets. A sweep here would delete
+  // everything this manifest does not happen to know about.
+  if (name.startsWith("wikipedia-") || keep.has(name)) continue;
+  console.log(`pruning stale asset ${name}`);
+  gh(["release", "delete-asset", TAG, name, "-y"], { stdio: "ignore" });
 }
 
 console.log(`published v${manifest.version}: base=${base?.name ?? "none"}, ${deltas.length} delta(s)`);

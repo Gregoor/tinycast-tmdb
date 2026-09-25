@@ -42,6 +42,10 @@ await buildIndexFromRecords([
     posterPath: "/got.jpg", imdbRating: 93 }),
   rec({ id: 140, title: "Bad Education", originalTitle: "La mala educación", year: 2004,
     posterPath: "/bad.jpg", rtScore: 86, metacriticScore: 78, imdbRating: 76 }),
+  // A pair whose scores differ by a whole match tier (exact title vs title prefix), so the ordering
+  // the provider hands the app can be asserted rather than assumed. Nothing else queries these.
+  rec({ id: 700, title: "Alpha", originalTitle: "Alpha", year: 2001 }),
+  rec({ id: 701, title: "Alphabet Soup", originalTitle: "Alphabet Soup", year: 2002 }),
 ], join(serveDir, "tmdb.index"), { verbose: false });
 
 // Delta: The Matrix was retitled, and the base row must stop matching the old text.
@@ -59,6 +63,11 @@ writeFileSync(join(serveDir, "manifest.json"), JSON.stringify({
 
 const downloads = [];
 let failing = false;
+/// This suite's served fixtures are uncompressed — a release from before the gzip convention — so the
+/// compressed attempt fails and the uncompressed asset installs. `sync.test.mjs` covers the other path.
+const gunzip = () => {
+  throw new Error("no .gz in these fixtures");
+};
 const download = (url, path) => {
   if (failing) throw new Error("offline");
   const name = url.slice(url.lastIndexOf("/") + 1);
@@ -73,7 +82,7 @@ const fs = {
 
 let clock = 1_000_000;
 const core = createProviderCore({
-  manifestURL: "https://example.test/movies/manifest.json", cacheDir, fs, download,
+  manifestURL: "https://example.test/movies/manifest.json", cacheDir, fs, download, gunzip,
   now: () => clock,
 });
 
@@ -85,6 +94,16 @@ check("poster URL is built from poster_path",
   results[0]?.posterURL === "https://image.tmdb.org/t/p/w92/matrix2.jpg", String(results[0]?.posterURL));
 check("a title-only match doesn't repeat the title as a keyword",
   (results[0]?.keywords ?? []).length === 0, JSON.stringify(results[0]?.keywords));
+
+// The provider's own order rides along normalized to its top row, so the app can rank these among its
+// own rows instead of appending them. Provider-relative by design: two providers' scales never compare.
+const ranked = await core.search("alpha", 5);
+check("every candidate carries a score in (0, 1]",
+  ranked.length >= 2 && ranked.every((row) => row.score > 0 && row.score <= 1),
+  JSON.stringify(ranked.map((row) => row.score)));
+check("the top row scores 1 and no later row rises above its predecessor",
+  ranked[0]?.score === 1 && ranked.every((row, i) => i === 0 || row.score <= ranked[i - 1].score),
+  JSON.stringify(ranked.map((row) => row.score)));
 
 // Found by its original title: the row leads with that title, dims the localized one behind it, and
 // keeps the localized title searchable.
@@ -104,8 +123,11 @@ check("...and keeps the original title searchable",
   byDisplay[0]?.keywords?.[0] === "La mala educación", JSON.stringify(byDisplay[0]?.keywords));
 check("the delta's version wins over the base", results[0]?.title === "The Matrix Resurrections",
   String(results[0]?.title));
-check("first search downloaded manifest + base + delta",
-  downloads.join(",") === "manifest.json,tmdb.index,delta-1.index", downloads.join(","));
+// These fixtures are a release from before the gzip convention, so each asset is tried compressed and
+// then fetched uncompressed. sync.test.mjs covers the path where the .gz is what installs.
+check("first sync tries the gzipped sibling, then the uncompressed asset",
+  downloads.join(",") === "manifest.json,tmdb.index.gz,tmdb.index,delta-1.index.gz,delta-1.index",
+  downloads.join(","));
 
 const tv = await core.search("game of thrones", 5);
 check("TV records are found and labelled", tv[0]?.id === "tv:1399" && tv[0]?.label === "TV Show",
@@ -125,6 +147,19 @@ check("past the window only the manifest is refetched",
 check("an unchanged manifest keeps the same results",
   refreshed[0]?.title === "The Matrix Resurrections", String(refreshed[0]?.title));
 
+// A fresh session over the same cache is what closing and reopening the palette looks like: inside the
+// window it mounts from disk without asking the release again, which is what makes the window span
+// sessions instead of resetting with each one.
+downloads.length = 0;
+const reopened = createProviderCore({
+  manifestURL: "https://example.test/movies/manifest.json", cacheDir, fs, download, gunzip,
+  now: () => clock,
+});
+const afterReopen = await reopened.search("matrix", 5);
+check("a fresh session inside the window mounts without touching the network",
+  downloads.length === 0 && afterReopen[0]?.title === "The Matrix Resurrections",
+  downloads.join(","));
+
 // A refresh that fails must keep serving the set already open.
 clock += 8 * 60 * 60 * 1000;
 failing = true;
@@ -143,7 +178,7 @@ check("activation ignores a malformed id", activationURL("nonsense") === null, S
 writeFileSync(join(cacheDir, "config.json"),
   JSON.stringify({ ratings: { movie: "metacritic", tv: "imdb" } }));
 const configured = createProviderCore({
-  manifestURL: "https://example.test/movies/manifest.json", cacheDir, fs, download,
+  manifestURL: "https://example.test/movies/manifest.json", cacheDir, fs, download, gunzip,
 });
 const byConfig = await configured.search("bad education", 3);
 check("config.json narrows a movie to Metacritic alone, green at 78",
@@ -152,7 +187,7 @@ check("config.json narrows a movie to Metacritic alone, green at 78",
 writeFileSync(join(cacheDir, "config.json"),
   JSON.stringify({ ratings: { movie: ["metacritic", "rt"] } }));
 const reordered = createProviderCore({
-  manifestURL: "https://example.test/movies/manifest.json", cacheDir, fs, download,
+  manifestURL: "https://example.test/movies/manifest.json", cacheDir, fs, download, gunzip,
 });
 const byOrder = await reordered.search("bad education", 3);
 check("scores render in the configured order",
@@ -169,7 +204,7 @@ check("...and a movie with RT and Metacritic shows no fallback alongside them",
 // A failed download must answer nothing rather than throw (the resident session must survive).
 rmSync(cacheDir, { recursive: true, force: true });
 const broken = createProviderCore({
-  manifestURL: "https://example.test/movies/manifest.json", cacheDir, fs,
+  manifestURL: "https://example.test/movies/manifest.json", cacheDir, fs, gunzip,
   download: () => { throw new Error("offline"); },
 });
 const offline = await broken.search("matrix", 5);

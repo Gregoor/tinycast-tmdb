@@ -7,7 +7,9 @@ export function published(asset) {
   return asset ? { name: asset.name, bytes: asset.bytes, sha256: asset.sha256 } : null;
 }
 
-export function buildManifest({ prev, base, deltas, bundle, store }) {
+/// `files` are assets a provider needs beside its index — the cross-language map — which travel and
+/// install exactly like the index does.
+export function buildManifest({ prev, base, deltas, bundle, store, files = [] }) {
   return {
     version: (prev?.version ?? 0) + 1,
     generatedAt: new Date().toISOString(),
@@ -15,6 +17,7 @@ export function buildManifest({ prev, base, deltas, bundle, store }) {
     deltas: deltas.map(published),
     bundle: published(bundle),
     ...(store ? { store: published(store) } : {}),
+    ...(files.length ? { files: files.map(published) } : {}),
   };
 }
 

@@ -4,7 +4,7 @@
 // The extension runtime supplies the fs shim and a downloader; tests supply node equivalents. Keeping
 // this free of `@tinycast/api` is what lets the delivery glue be verified outside the app.
 
-import { syncIndexes } from "./db/index-sync.mjs";
+import { installedPaths, syncIndexes } from "./db/index-sync.mjs";
 import { openRuntimeReader } from "./db/runtime-reader.mjs";
 import { MovieIndex } from "./db/loader.mjs";
 import { searchMovies } from "./movies/search.mjs";
@@ -82,7 +82,7 @@ const REFRESH_MS = 6 * 60 * 60 * 1000;
 /// nothing, and a failed refresh falls back to the set already open, so a resident provider session
 /// can't be broken by a failed download.
 export function createProviderCore({
-  manifestURL, cacheDir, fs, download, log = () => {}, now = Date.now, refreshMs = REFRESH_MS,
+  manifestURL, cacheDir, fs, download, gunzip, log = () => {}, now = Date.now, refreshMs = REFRESH_MS,
 }) {
   let indexes = null;
   let ratings = null;
@@ -96,7 +96,11 @@ export function createProviderCore({
       opening = (async () => {
         // Read the display config before the sync, so a pruning bug in the sync can never eat it.
         ratings ??= readRatingsPreference(fs, cacheDir, log);
-        const paths = syncIndexes({ manifestURL, cacheDir, fs, download, log });
+        // A mount is the first query of every palette session and the manifest check is a network round
+        // trip, so a cache checked within the refresh window mounts straight from disk.
+        const paths =
+          installedPaths({ cacheDir, fs, maxAgeMs: refreshMs, now })
+          ?? syncIndexes({ manifestURL, cacheDir, fs, download, gunzip, log, now });
         const key = paths.join("|");
         // Unchanged manifest: keep the open set rather than re-reading the whole index.
         if (key === openPaths && indexes) return indexes;
@@ -130,13 +134,16 @@ export function createProviderCore({
     }
     if (!list) return [];
     const results = await searchMovies(list, query, { limit });
-    return results.map((movie) => toCandidate(movie, ratings));
+    // Normalized to the top row of this result set, so the app can rank these among its own rows
+    // instead of appending them. Provider-relative by design: two providers' scales never compare.
+    const top = results[0]?.score ?? 0;
+    return results.map((movie) => toCandidate(movie, ratings, top));
   }
 
   return { search, ensureIndexes };
 }
 
-function toCandidate(movie, ratings) {
+function toCandidate(movie, ratings, topScore = 0) {
   const original = movie.originalTitle;
   // A row leads with whichever title the query matched and dims the other behind it, so what matched
   // is visible either way round. Folded-equal titles ("Marter" / "MARTER") are the same title and dim
@@ -158,6 +165,7 @@ function toCandidate(movie, ratings) {
     keywords: differs ? [alternate] : [],
     posterURL: movie.posterURL ?? undefined,
     label: movie.mediaType === "tv" ? "TV Show" : "Movie",
+    score: topScore > 0 ? movie.score / topScore : undefined,
   };
 }
 

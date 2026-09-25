@@ -1,0 +1,82 @@
+name: Wikipedia index
+
+# Rebuilds the wiki index whole rather than by delta, and here is the measurement behind that: the band
+# is ranked by pageviews and byte-budgeted, so its floor sits at one or two views a day — measured 72% of
+# the German band and 78% of the Spanish one below ten views a day, against 0% of the English one. Rows
+# down there shuffle on a single view, and `popularity` is a single day's count, so a day's delta carried
+# 62% (de) and 74% (es) of a full rebuild.
+#
+# Daily, accepting that cost: every client re-downloads ~31 MB per wiki on a day the band moves, i.e.
+# ~93 MB across the three. Making that cheap needs two things the pipeline does not have yet — a stable
+# row key (the Wikidata item, resolved once per title) and a decayed score so the band holds still.
+#
+# The entity map is fetched from Wikidata in 400-article chunks and only for the head of each band: the
+# work is bounded by requests to a shared public endpoint, not by Wikidata's size.
+
+on:
+  schedule:
+    # Daily. The pageview dumps lag a day, so the sample wants a complete day behind it.
+    - cron: "30 6 * * *"
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "Pageview sample date (YYYY-MM-DD, blank = yesterday)"
+        required: false
+        default: ""
+      head:
+        description: "Rows per wiki to map to a Wikidata item (blank = 10000)"
+        required: false
+        default: ""
+
+concurrency:
+  group: wikipedia-index
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # to publish the rolling release
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Sample the pageviews
+        env:
+          DATE: ${{ inputs.date }}
+        run: |
+          DAY="${DATE:-$(date -u -d yesterday +%F)}"
+          echo "sampling $DAY"
+          node --max-old-space-size=8192 Scripts/fetch-wikipedia-views.mjs \
+            --date="$DAY" --min-views=1 --keep=1000000 --out=data/wikipedia/views.ndjson
+
+      - name: Resolve the sample against each wiki
+        run: node Scripts/fetch-wikipedia.mjs --min-views=1
+
+      - name: Build one index per wiki
+        run: |
+          for lang in en de es; do
+            node Scripts/build-index-wikipedia.mjs "$lang" --budget-mb=100
+          done
+
+      # One command: it writes the map and refreshes the three manifests, which is what keeps the
+      # manifest's recorded hashes and the shipped bytes from drifting apart.
+      - name: Map the cross-language entities
+        env:
+          HEAD: ${{ inputs.head }}
+        run: |
+          node --max-old-space-size=8192 Scripts/fetch-wiki-groups.mjs \
+            --head "${HEAD:-10000}" --from en,de,es --delay 500 --write
+
+      - name: Publish the rolling release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node Scripts/publish-wikipedia.mjs
