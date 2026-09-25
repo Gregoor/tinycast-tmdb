@@ -13,7 +13,7 @@
 import { statSync } from "node:fs";
 import { readStore } from "./store.mjs";
 import { buildIndexFromRecords } from "./build-index.mjs";
-import { strength } from "../src/wikipedia/popularity.mjs";
+import { shipping } from "../src/wikipedia/popularity.mjs";
 
 const argument = (name, fallback) => {
   const hit = process.argv.find((value) => value.startsWith(`--${name}=`));
@@ -24,16 +24,6 @@ const lang = process.argv[2] ?? "en";
 const budget = Number(argument("budget-mb", 100)) * 1048576;
 const dir = argument("dir", `data/wikipedia/${lang}`);
 const out = argument("out", `build/wikipedia-${lang}.index`);
-
-/// The band is chosen on the exact standing, and what ships is a level of it. That split is the whole
-/// point: the exact score moves every day for nearly every row, while a level only moves when an
-/// article's rate does — which is what lets a rebuild rewrite a few percent of the index rather than all
-/// of it. The level is plenty for ranking, which only has to order the handful of rows a query returns.
-const shipping = (slice) =>
-  slice.map((record) => {
-    const level = strength(record.popularity);
-    return { ...record, popularity: level, voteCount: level };
-  });
 
 const records = [...readStore(dir).values()].sort((a, b) => b.popularity - a.popularity);
 console.log(`  ${lang}: ${records.length.toLocaleString()} records in the store`);

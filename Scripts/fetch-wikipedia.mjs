@@ -7,19 +7,18 @@
 // identity, and a client that wants English should not download German to search for it.
 //
 // Readership stands in for TMDB's vote count, but not as a reading: `popularity` is the *decayed* score
-// across days (see `src/wikipedia/popularity.mjs`), which is what makes an article's standing a rate
-// rather than today's number. The previous store is therefore the input to this one rather than being
-// replaced by it — a rebuild folds in the day it is rebuilding for.
-//
-// `id` is a hash of the language and title, so it survives a re-sample. Without that, every rebuild
-// renumbers every row and nothing can say what changed.
+// across days (see `src/wikipedia/popularity.mjs`), so an article's standing is a rate. The previous
+// store is therefore the input to this one rather than being replaced by it — a rebuild folds in the day
+// it is rebuilding for, and what it cannot say about a row it carries forward.
 //
 // The record is written in the shape `build-index.mjs` already reads, field for field, because that is
-// the index format's input contract rather than a movie's.
+// the index format's input contract rather than a movie's. Three fields are this store's own, and a delta
+// reads all three: `changedOn`, the day the shipped level last moved; `prevId`, an id this row had
+// before it changed; and `dropped.json` beside it, the ids that left the band since the last build.
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { appendRecord, readStore, storePath } from "./store.mjs";
-import { articleID, decay } from "../src/wikipedia/popularity.mjs";
+import { articleID, decay, strength } from "../src/wikipedia/popularity.mjs";
 
 const argument = (name, fallback) => {
   const hit = process.argv.find((value) => value.startsWith(`--${name}=`));
@@ -46,13 +45,28 @@ function daysSince(previousDate) {
   return Number.isFinite(gap) && gap > 0 ? gap : 1;
 }
 
-/// The date of the sample this store was last built from, if it says.
+/// The sample this store was last built from, if it says.
 function previousDate(dir) {
   try {
     return JSON.parse(readFileSync(`${dir}/sampled.json`, "utf8")).date ?? null;
   } catch {
     return null;
   }
+}
+
+/// Resolved Wikidata items by title, where `Scripts/fetch-wiki-keys.mjs` has got to them. An article
+/// without one keeps a title hash instead — an id has to fit 31 bits, since a stable key is `id * 2` in a
+/// `Uint32Array`, and a hash is only as stable as the title it is made from.
+function wikidataKeys(dir) {
+  const keys = new Map();
+  try {
+    for (const line of readFileSync(`${dir}/keys.ndjson`, "utf8").split("\n")) {
+      if (!line) continue;
+      const { title, qid } = JSON.parse(line);
+      if (qid && qid < 2 ** 31) keys.set(title, qid);
+    }
+  } catch {}
+  return keys;
 }
 
 const sampled = readFileSync(viewsPath, "utf8")
@@ -69,11 +83,12 @@ for (const row of sampled) {
 
 for (const [lang, rows] of [...byLanguage].sort()) {
   const dir = `${out}/${lang}`;
-  // The standing carried over from the last build, by title — which is what a sample row arrives as.
-  const standings = new Map();
+  // Everything the last build knew, by title — which is what a sample row arrives as.
+  const before = new Map();
   if (existsSync(storePath(dir))) {
-    for (const record of readStore(dir).values()) standings.set(record.title, Number(record.popularity) || 0);
+    for (const record of readStore(dir).values()) before.set(record.title, record);
   }
+  const keys = wikidataKeys(dir);
   const days = daysSince(previousDate(dir));
   rows.sort((a, b) => b.views - a.views);
 
@@ -82,29 +97,43 @@ for (const [lang, rows] of [...byLanguage].sort()) {
   mkdirSync(dir, { recursive: true });
 
   const seen = new Set();
-  let collisions = 0;
+  const live = new Set();
+  const collisions = [];
   let rank = 0;
   for (const row of rows) {
     rank += 1;
     const title = row.title.replaceAll("_", " ");
-    const id = articleID(`${lang}:${title}`);
+    const id = keys.get(title) ?? articleID(`${lang}:${title}`);
     // An id collision would merge two articles into one row, so it is counted rather than assumed away.
-    if (seen.has(id)) collisions += 1;
+    if (seen.has(id)) collisions.push(title);
     seen.add(id);
+    live.add(title);
+
+    const was = before.get(title);
+    const score = decay(was ? Number(was.popularity) || 0 : 0, row.views, days);
+    // What a delta keys on: the row changed if its shipped level moved or it is not the same article it
+    // was — and when the id moved, the supersede list has to name the old one too.
+    const changed = !was || was.id !== id || strength(score) !== strength(Number(was.popularity) || 0);
     appendRecord(dir, {
       // The index format encodes this as one bit, so an article rides in the movie slot. Splitting by
       // language is what makes that acceptable: the language is the index, not a bit inside it.
       mediaType: "movie",
       id,
+      ...(changed && was && was.id !== id ? { prevId: was.id } : {}),
       title,
       originalTitle: label(row.lang),
-      // The standing, and only this store's business: the index ships a level of it.
-      popularity: decay(standings.get(title) ?? 0, row.views, days),
+      popularity: score,
       voteCount: 0,
       posterPath: "",
+      changedOn: changed ? (meta.date ?? "") : (was?.changedOn ?? ""),
     });
   }
+
+  // The ids that left the band: a delta has to supersede them or a client keeps a row nobody ships.
+  const dropped = [...before.values()].filter((record) => !live.has(record.title)).map((record) => record.id);
+  writeFileSync(`${dir}/dropped.json`, JSON.stringify(dropped));
   writeFileSync(`${dir}/sampled.json`, JSON.stringify(meta, null, 2) + "\n");
   console.log(
-    `  ${lang}: ${rank.toLocaleString()} records` + (collisions ? `, ${collisions} id collisions` : ""));
+    `  ${lang}: ${rank.toLocaleString()} records, ${dropped.length.toLocaleString()} dropped` +
+      (collisions.length ? `, ${collisions.length} id collisions: ${collisions.slice(0, 3).join(", ")}` : ""));
 }

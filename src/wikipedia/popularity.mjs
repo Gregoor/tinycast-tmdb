@@ -18,6 +18,22 @@ export function strength(score) {
   return Math.max(0, Math.floor(Math.log2(Math.max(0, score) + 1)));
 }
 
+/// A record as the index ships it: a *level* of the standing rather than the standing. The band is chosen
+/// on the exact score, and only the level crosses into the shipped bytes — which is what lets a rebuild
+/// rewrite a few percent of the index instead of all of it.
+export function shipping(records) {
+  return records.map((record) => {
+    const level = strength(record.popularity);
+    return { ...record, popularity: level, voteCount: level };
+  });
+}
+
+/// The numeric key a record is superseded by. Matches `store.mjs`'s `stableKey`, which the loader's
+/// `MovieIndex.stableKey` also has to agree with — asserted in `test/delta.test.mjs`.
+export function stableKey(record) {
+  return record.id * 2 + (record.mediaType === "tv" ? 1 : 0);
+}
+
 /// Today's reading folded into the standing, `days` after the last one. A gap rather than a step, so a
 /// rebuild that was skipped — or a CI run that failed — decays by the time it actually missed.
 export function decay(previous, today, days = 1, halfLife = HALF_LIFE_DAYS) {

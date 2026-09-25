@@ -103,21 +103,27 @@ for (const hour of hours) {
     input: Readable.fromWeb(response.body).pipe(createGunzip()),
   });
   let kept = 0;
-  for await (const line of reader) {
-    if (!line) continue;
-    const [code, title, views] = line.split(" ");
-    const lang = languageOf(code ?? "");
-    if (!lang) continue;
-    const hourViews = Number(views);
-    if (!Number.isFinite(hourViews) || hourViews < minViews) continue;
-    const prefix = prefixOf(title);
-    if (prefix && skip.get(lang).has(prefix)) {
-      excluded++;
-      continue;
+  // A connection that drops mid-body emits on the stream rather than rejecting the read, and the hours
+  // already folded in are only in memory — so a lost hour is short rather than the whole day being lost.
+  try {
+    for await (const line of reader) {
+      if (!line) continue;
+      const [code, title, views] = line.split(" ");
+      const lang = languageOf(code ?? "");
+      if (!lang) continue;
+      const hourViews = Number(views);
+      if (!Number.isFinite(hourViews) || hourViews < minViews) continue;
+      const prefix = prefixOf(title);
+      if (prefix && skip.get(lang).has(prefix)) {
+        excluded++;
+        continue;
+      }
+      const titles = totals.get(lang);
+      titles.set(title, (titles.get(title) ?? 0) + hourViews);
+      kept++;
     }
-    const titles = totals.get(lang);
-    titles.set(title, (titles.get(title) ?? 0) + hourViews);
-    kept++;
+  } catch (error) {
+    console.error(`  ${stamp}: ${error?.message ?? error} — that hour is short`);
   }
   for (const lang of langs) prune(lang);
   const held = langs.map((lang) => `${lang} ${totals.get(lang).size.toLocaleString()}`).join(" · ");

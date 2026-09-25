@@ -1,17 +1,15 @@
 name: Wikipedia index
 
-# Rebuilds the wiki index whole rather than by delta, and here is the measurement behind that: the band
-# is ranked by pageviews and byte-budgeted, so its floor sits at one or two views a day — measured 72% of
-# the German band and 78% of the Spanish one below ten views a day, against 0% of the English one. Rows
-# down there shuffle on a single view, and `popularity` is a single day's count, so a day's delta carried
-# 62% (de) and 74% (es) of a full rebuild.
+# Keeps the wiki band current by delta rather than by republishing ~95 MB a day.
 #
-# Daily, accepting that cost: every client re-downloads ~31 MB per wiki on a day the band moves, i.e.
-# ~93 MB across the three. Making that cheap needs two things the pipeline does not have yet — a stable
-# row key (the Wikidata item, resolved once per title) and a decayed score so the band holds still.
+# The band is ranked by pageviews and byte-budgeted, so its floor sits at one or two views a day — where a
+# single view either way reorders a row. Measured against the 2026-09-24 sample and a resampled day after
+# it: an article's exact standing moved for 68–96% of rows, but a *level* of it moved for 2–8%, and the
+# band itself reshuffled by 0.2–10%. So the store keeps a decayed score and the index ships its octave:
+# a delta then carries a few percent of a band rather than all of it.
 #
-# The entity map is fetched from Wikidata in 400-article chunks and only for the head of each band: the
-# work is bounded by requests to a shared public endpoint, not by Wikidata's size.
+# The chain restarts weekly and on a cold cache — a delta can only be applied to the base it was built
+# on, so a run with no marker and no base behind it rebuilds instead.
 
 on:
   schedule:
@@ -23,8 +21,12 @@ on:
         description: "Pageview sample date (YYYY-MM-DD, blank = yesterday)"
         required: false
         default: ""
+      mode:
+        description: "delta (small, incremental) or base (rebuild everything)"
+        required: false
+        default: "delta"
       head:
-        description: "Rows per wiki to map to a Wikidata item (blank = 10000)"
+        description: "Rows per wiki to map to a Wikidata item, on a base run (blank = 10000)"
         required: false
         default: ""
 
@@ -33,7 +35,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
+  update:
     runs-on: ubuntu-latest
     permissions:
       contents: write # to publish the rolling release
@@ -46,10 +48,19 @@ jobs:
 
       - run: npm ci
 
+      # The stores are the state every run folds into: the decayed standings, the resolved Wikidata keys,
+      # and the marker the delta chain is cut against.
+      - name: Restore the wiki stores
+        uses: actions/cache/restore@v6
+        with:
+          path: data/wikipedia
+          key: wikipedia-store-${{ github.run_id }}
+          restore-keys: wikipedia-store-
+
       - name: Test
         run: npm test
 
-      - name: Sample the pageviews
+      - name: Sample the pageviews and fold them in
         env:
           DATE: ${{ inputs.date }}
         run: |
@@ -57,26 +68,60 @@ jobs:
           echo "sampling $DAY"
           node --max-old-space-size=8192 Scripts/fetch-wikipedia-views.mjs \
             --date="$DAY" --min-views=1 --keep=1000000 --out=data/wikipedia/views.ndjson
+          node Scripts/fetch-wikipedia.mjs --min-views=1
 
-      - name: Resolve the sample against each wiki
-        run: node Scripts/fetch-wikipedia.mjs --min-views=1
+      # Bounded per run: the first pass over a band is thousands of requests, and every run after it is
+      # the handful of new articles. A title with no key yet falls back to one derived from its title.
+      - name: Resolve Wikidata keys
+        run: node --max-old-space-size=8192 Scripts/fetch-wiki-keys.mjs --delay 500 --limit=300000
+
+      - name: Decide delta vs base
+        id: mode
+        run: |
+          # A base on Sundays, on request, or when there is no marker to cut a delta against — which is
+          # what a cold cache looks like.
+          MODE="${{ inputs.mode }}"
+          if [ "$(date -u +%u)" = "7" ] || [ ! -f data/wikipedia/en/published.json ]; then
+            MODE=base
+          fi
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "mode=$MODE"
 
       - name: Build one index per wiki
+        if: steps.mode.outputs.mode == 'base'
         run: |
           for lang in en de es; do
             node Scripts/build-index-wikipedia.mjs "$lang" --budget-mb=100
           done
 
-      # One command: it writes the map and refreshes the three manifests, which is what keeps the
-      # manifest's recorded hashes and the shipped bytes from drifting apart.
+      # Only a base run needs the entity map: it is keyed by row, and a delta does not move the base's rows.
       - name: Map the cross-language entities
+        if: steps.mode.outputs.mode == 'base'
         env:
           HEAD: ${{ inputs.head }}
         run: |
           node --max-old-space-size=8192 Scripts/fetch-wiki-groups.mjs \
             --head "${HEAD:-10000}" --from en,de,es --delay 500 --write
 
+      - name: Build the deltas
+        if: steps.mode.outputs.mode == 'delta'
+        run: |
+          for lang in en de es; do
+            node Scripts/build-wikipedia-delta.mjs "$lang" --mark
+          done
+
       - name: Publish the rolling release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node Scripts/publish-wikipedia.mjs
+        run: |
+          if [ "${{ steps.mode.outputs.mode }}" = "base" ]; then
+            node Scripts/publish-wikipedia.mjs --base
+          else
+            node Scripts/publish-wikipedia.mjs
+          fi
+
+      - name: Save the wiki stores
+        uses: actions/cache/save@v6
+        with:
+          path: data/wikipedia
+          key: wikipedia-store-${{ github.run_id }}

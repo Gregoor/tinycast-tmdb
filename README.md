@@ -212,19 +212,26 @@ node Scripts/fetch-wikipedia-views.mjs --date=YYYY-MM-DD --min-views=1 --keep=10
 node Scripts/fetch-wikipedia.mjs --min-views=1
 for lang in en de es; do node Scripts/build-index-wikipedia.mjs $lang --budget-mb=100; done
 
-# The entity map. `--write` also refreshes the three manifests, because a manifest records the map's
-# bytes and a stale one fails the client's check.
+# Wikidata ids, kept per title: the first pass is thousands of requests, every run after it is the new
+# articles. A title without one keeps a hash of itself as its id.
+node --max-old-space-size=8192 Scripts/fetch-wiki-keys.mjs --delay 500
+
+# A base: one index per wiki, plus the entity map. `--write` also refreshes the manifests, because a
+# manifest records the map's bytes and a stale one fails the client's check.
+for lang in en de es; do node Scripts/build-index-wikipedia.mjs $lang --budget-mb=100; done
 node --max-old-space-size=8192 Scripts/fetch-wiki-groups.mjs --head 50000 --from en,de,es --write
+
+# Or a delta, against the marker the last publish moved:
+node Scripts/build-wikipedia-delta.mjs en --mark
 
 # Publish to the same rolling `latest` release the movie index uses. One release, not two:
 # `releases/latest/download/...` resolves to the most recent, so a second would take the URL the first
-# one's clients depend on.
+# one's clients depend on. `--base` republishes the whole index and restarts the delta chain.
 node Scripts/publish-wikipedia.mjs
 ```
 
-`.github/workflows/wikipedia.yml` runs that chain daily. It still republishes all three indexes whole,
-because the delta builder is the remaining piece — but the two things that make a delta worth having are
-now in the pipeline.
+`.github/workflows/wikipedia.yml` runs that chain daily: a delta most days, a base on Sundays or when
+its cache is cold. Everything below is what makes the delta small enough to be worth having.
 
 **The store is incremental.** `popularity` is a decayed score rather than a day's reading (see
 `src/wikipedia/popularity.mjs`), so an article's standing is a rate: a rebuild folds the day in rather

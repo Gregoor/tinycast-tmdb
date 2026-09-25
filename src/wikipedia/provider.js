@@ -190,13 +190,15 @@ export default function command() {
           download,
           gunzip,
         });
-      // A manifest carries the index and, once it has been built, the cross-language map beside it.
-      const indexPath = paths.find((path) => path.endsWith(".index"));
+      // A manifest carries the base index, whatever deltas are still in its chain, and the cross-language
+      // map beside them. The loader merges a list of indexes by stable key, keeping the newest version of
+      // each, so they are all opened — in the order the manifest names them, base first.
+      const indexes = paths.filter((path) => path.endsWith(".index"));
       const groupsPath = paths.find((path) => path.endsWith(".groups"));
-      if (indexPath) {
+      for (const path of indexes) {
         bands.push({
           language,
-          index: await new MovieIndex({ reader: openRuntimeReader(indexPath, fs) }).open(),
+          index: await new MovieIndex({ reader: openRuntimeReader(path, fs) }).open(),
         });
       }
       const groups = groupsPath ? openGroups(fs.readFileSync(groupsPath)) : null;
