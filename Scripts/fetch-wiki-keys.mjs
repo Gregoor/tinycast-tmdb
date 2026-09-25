@@ -89,7 +89,16 @@ for (const lang of only ? [only] : LANGUAGES) {
   for (let at = 0; at < pending.length; at += chunk) {
     const slice = pending.slice(at, at + chunk);
     const found = new Map();
-    for (const row of await queryItems(slice.map((title) => pageURL(lang, title)))) {
+    let bindings;
+    try {
+      bindings = await queryItems(slice.map((title) => pageURL(lang, title)));
+    } catch (error) {
+      // The endpoint or the network is gone. Stopping here is free: every key already written is kept,
+      // and the next run asks only about the titles this one never reached.
+      console.error(`\n  ${lang}: ${error?.message ?? error} — stopping with ${resolved.toLocaleString()} done`);
+      break;
+    }
+    for (const row of bindings) {
       found.set(pageTitle(row.page.value), Number(row.item.value.slice(1)));
     }
     let lines = "";
