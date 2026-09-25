@@ -20,12 +20,18 @@ manifest.json            version + each asset's name, bytes and sha256
 tmdb.index               the base index
 delta-2026-09-23.index   one small index per day (new + changed records)
 store.ndjson.gz          the metadata store, so a lost Actions cache needs no re-backfill
-provider.bundle.js       the built provider (source lives here in git)
+movies.provider.js       the built provider (source lives here in git)
+wikipedia-<lang>.index   one index per wiki, each with its own manifest
+wikipedia.provider.js    the built provider (source lives here in git)
 ```
 
-The client fetches the tiny `manifest.json` every launch and downloads an index file only when its
-recorded hash differs from what is already cached, so a launch costs one small request and a day's
-update costs only that day's delta.
+`assets/wikipedia.png` is Wikipedia's own mark, from Wikimedia Commons (CC BY-SA), drawn as the icon of
+the rows the Wikipedia provider contributes. `Scripts/build-provider.mjs` copies it beside the bundle,
+because the provider's own directory is all the host will resolve a candidate's icon against.
+
+The client checks the manifest when its cache is older than six hours, and downloads an index file only
+when the recorded hash differs from what is on disk. So a launch inside that window costs no request at
+all, a check costs one small request, and a day's update costs only that day's delta.
 
 ## How a day's update runs
 
@@ -71,6 +77,24 @@ The one-vote floor on recent titles is what separates a genuine new release from
 zero-vote entries the export adds daily — 114k of those arrived in the last two years alone, so plain
 recency would have been far too broad. Dropping a record here is reversible and costs nothing: the
 store keeps it, so a later base rebuild can bring it back.
+
+## Languages and the entity map
+
+The Wikipedia provider serves three wikis, and the same subject is very often spelled differently in
+each: `New York City` / `Nueva York`, `Deaths in 2026` / `Nekrolog 2026`, `Mutiny on the Bounty (1962
+film)` / `Meuterei auf der Bounty (1962)`. A title cannot tell those apart, so one row becomes three,
+and a query that matched the German article never offers the English one.
+
+`Scripts/fetch-wiki-groups.mjs` resolves each wiki's head to a Wikidata item and matches that item's
+other-language articles back to rows **this repo ships**, writing one `wikipedia-<lang>.groups` per
+language: a sparse table of (row → entity) and (entity → row), both sorted and binary searched. The
+provider merges on the entity where it has one and on the title where it does not, so the unmapped tail
+degrades to exactly the behaviour it had before.
+
+Measured on the top 3,000 English articles by views: 94.8% resolve to an item, 2,487 groups of two or
+more rows form, and **917 of them (37%) are differently named** — the merges a title alone cannot make.
+Only the head is mapped, because the work is bounded by requests to a shared public endpoint rather
+than by data: one 400-article chunk per request, so a 50k head across three languages is 375 requests.
 
 ## Ratings
 
@@ -119,6 +143,13 @@ of the same mechanism.
 
 - **The index is extension-owned.** ~1.5M rows never enter Tinycast's `AppIndex`; the provider
   searches locally and returns a bounded candidate set.
+- **The provider orders its own rows, and says so.** Each candidate carries a `score` on 0…1 —
+  `movieScore`'s tiers, normalized to the result set's best row — which Tinycast folds into its own
+  ranking. It is provider-relative by design and never compared with another provider's scale.
+- **A query never waits for the mount.** The provider mounts in the background as its session starts —
+  which is when the palette opens — and a query that finds nothing mounted yet answers nothing rather
+  than blocking. A fresh install or a republish therefore pays its download and gunzip in the
+  background, never inside a keystroke.
 - **The store is durable**, so the multi-hour backfill and each daily delta restart without
   re-fetching what is present (`data/records.ndjson` is the checkpoint).
 - **The index ships as a Release asset.** Release assets have no expiry (unlike Actions artifacts,
@@ -173,6 +204,39 @@ npm run build-provider
 # The whole daily cycle:
 npm run update
 ```
+
+Wikipedia is its own chain — a pageview sample, one index per wiki, then the cross-language map:
+
+```sh
+node Scripts/fetch-wikipedia-views.mjs --date=YYYY-MM-DD --min-views=1 --keep=1000000
+node Scripts/fetch-wikipedia.mjs --min-views=1
+for lang in en de es; do node Scripts/build-index-wikipedia.mjs $lang --budget-mb=100; done
+
+# The entity map. `--write` also refreshes the three manifests, because a manifest records the map's
+# bytes and a stale one fails the client's check.
+node --max-old-space-size=8192 Scripts/fetch-wiki-groups.mjs --head 50000 --from en,de,es --write
+
+# Publish to the same rolling `latest` release the movie index uses. One release, not two:
+# `releases/latest/download/...` resolves to the most recent, so a second would take the URL the first
+# one's clients depend on.
+node Scripts/publish-wikipedia.mjs
+```
+
+`.github/workflows/wikipedia.yml` runs that chain daily. It still republishes all three indexes whole,
+because the delta builder is the remaining piece — but the two things that make a delta worth having are
+now in the pipeline.
+
+**The store is incremental.** `popularity` is a decayed score rather than a day's reading (see
+`src/wikipedia/popularity.mjs`), so an article's standing is a rate: a rebuild folds the day in rather
+than replacing it, and a skipped run decays by the time it missed. **The identity is stable.** `id` is a
+hash of the language and title, so a rebuild can say what changed instead of renumbering every row — the
+first thing this pipeline could not do.
+
+**And the index ships a level, not the score.** The band is chosen on the exact standing, then what
+ships is its octave. That split is the whole point: the exact score moves every day for nearly every
+row, so shipping it would make every rebuild a full republish, while a level only moves when the rate
+does. Measured over the 2026-09-24 sample and a resampled day after it: rows whose shipped value changed
+fell from 83–96% to a few percent, and the band itself stopped reshuffling.
 
 `TMDB_API_KEY` (v3) also works in place of `TMDB_READ_TOKEN` (v4 bearer).
 
