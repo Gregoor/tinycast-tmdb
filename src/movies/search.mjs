@@ -42,8 +42,8 @@ export async function searchMovies(indexes, query, { limit = 10, candidatePool =
       entries.push({
         key,
         index: i,
-        // The row within its own index. The cross-language map is keyed by it, and `index` alone is
-        // only the position in the base/delta list.
+        // The row within its own index: its position there, not the stable id the cross-language map
+        // is keyed by. `index` alone is only the position in the base/delta list.
         row: candidates[k],
         rec,
         title,

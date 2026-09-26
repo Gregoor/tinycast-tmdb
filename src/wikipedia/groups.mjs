@@ -5,11 +5,17 @@
 // matched, and "which row is this entity" for a language it wants to offer. Both are binary searched,
 // so nothing here is scanned per query and no titles are held in memory.
 //
-//   "TCWG0001" | u32 languages | u32 byRowCount | u32 byGroupCount
-//   (rowIndex, groupId) * byRowCount      sorted by rowIndex
+//   "TCWG0002" | u32 languages | u32 byRowCount | u32 byGroupCount
+//   (stableId, groupId) * byRowCount      sorted by stableId
 //   (groupId, rowIndex) * byGroupCount    sorted by groupId
+//
+// The two columns are asymmetric on purpose. A row is named forward by its stable id, because a row a
+// delta carries has no position in the base — that is the bug this key fixes. It is named back by its
+// base row position, because the map is built on a base run from that run's base index, so a base
+// position is well defined until the next base; the stable id could not name the row back without
+// holding the language's rows, since an index is ordered by standing rather than by id.
 
-const MAGIC = "TCWG0001";
+const MAGIC = "TCWG0002";
 const HEADER_BYTES = 20;
 
 /// The row an entity has in this language, or nil when it has none.
@@ -40,8 +46,8 @@ export function openGroups(buffer) {
     byRowCount,
     byGroupCount,
     /// The entity a row belongs to, or 0 when it stands alone.
-    groupOfRow: (rowIndex) => seek(rowsAt, byRowCount, rowIndex) ?? 0,
-    /// The row an entity has in this language, or nil.
+    groupOfRow: (stableId) => seek(rowsAt, byRowCount, stableId) ?? 0,
+    /// The row an entity has in this language, as a base row position, or nil.
     rowOfGroup: (groupId) => seek(groupsAt, byGroupCount, groupId),
   };
 }

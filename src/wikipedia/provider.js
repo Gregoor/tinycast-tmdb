@@ -46,6 +46,11 @@ if (!CACHE_DIR) {
 /// index already has for a subtitle.
 const languageOf = (row) => String(row.originalTitle ?? "").split(".")[0] || "en";
 
+/// The stable id the cross-language map is keyed by, for a row the search handed back. A wiki row is
+/// always a movie, so the media-type bit is 0 and the key is the article id doubled — the same value
+/// the index records, which is what lets a delta's row be found in a map built from the base.
+const stableIdOf = (row) => MovieIndex.stableKey(row.mediaType === "tv" ? 1 : 0, row.tmdbID);
+
 /// The row offered when the band has nothing. The band is a byte-budgeted slice of three wikis, so an
 /// article below its floor is *absent* rather than missing — and the honest answer to that is the wikis'
 /// own search page, which is also what a fallback command would open. Each wiki gets an action because
@@ -77,7 +82,7 @@ function searchRow(query) {
 /// The row keeps the language whose match scored best, so a German query shows the German title it
 /// matched rather than the English one; English breaks a tie. A sibling the query never matched is read
 /// back from its own index, since its title is only ever known there.
-async function mergeLanguages(rows, limit, languageGroups, bands) {
+export async function mergeLanguages(rows, limit, languageGroups, bands) {
   const startsCapitalised = (title) => title === title.charAt(0).toUpperCase() + title.slice(1);
   /// The better of two rows for one wiki: the query's own score first, then how read the article is —
   /// and on a tie the capitalised title, which is the article rather than the redirect pointing at it.
@@ -95,10 +100,11 @@ async function mergeLanguages(rows, limit, languageGroups, bands) {
   const byTitle = new Map();
   for (const row of rows) {
     const language = languageOf(row);
-    // A mapped entity joins every language's row for it. Wikipedia capitalises the first letter of every
-    // article title, so an unmapped lowercase variant is a redirect to the same page and folds into the
-    // same key as its capitalised twin.
-    const entity = languageGroups.get(language)?.groupOfRow(row.row) ?? 0;
+    // A mapped entity joins every language's row for it. The map is keyed by stable id, not by the
+    // row's position — which for a delta's row is a different position than the base's. Wikipedia
+    // capitalises the first letter of every article title, so an unmapped lowercase variant is a
+    // redirect to the same page and folds into the same key as its capitalised twin.
+    const entity = languageGroups.get(language)?.groupOfRow(stableIdOf(row)) ?? 0;
     const folded = row.title.toLowerCase();
     const key = entity ? `entity:${entity}` : (byTitle.get(folded) ?? `title:${folded}`);
     const group = groups.get(key) ?? { byLanguage: new Map(), best: row, entity };

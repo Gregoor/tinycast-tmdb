@@ -29,9 +29,14 @@ const ENDPOINT = "https://query.wikidata.org/sparql";
 const UA = "tinycast-tmdb/0.1 (https://github.com/Gregoor/tinycast-tmdb)";
 
 /// Sparse side table: a group is an entity, and a language holds at most one row of it.
-///   magic "TCWG0001" | u32 languages | per language: u32 byRowCount, u32 byGroupCount, then
-///   (rowIndex, groupId) sorted by rowIndex, then (groupId, rowIndex) sorted by groupId.
-const GROUP_MAGIC = "TCWG0001";
+///   magic "TCWG0002" | u32 languages | per language: u32 byRowCount, u32 byGroupCount, then
+///   (stableId, groupId) sorted by stableId, then (groupId, rowIndex) sorted by groupId.
+///
+/// The forward column is the row's stable id, not its base position: a row a delta carries has no base
+/// position at all, and a position-keyed map would not find it until the next base rebuild. The reverse
+/// column stays the base row's position — this map is built on a base run from that run's base index,
+/// so a position is well defined for the life of that base.
+const GROUP_MAGIC = "TCWG0002";
 
 function parseArgs(argv) {
   const args = new Map();
@@ -66,16 +71,22 @@ async function openBand(lang, head) {
   const indices = [...Array(index.rowCount).keys()];
   const rows = await index.readRows(indices);
   const { titles } = await index.readTitles(rows);
+  // A member is named forward by its stable id — a delta row has no base position — and back by its
+  // base position, which is what the reverse column keeps.
+  const keys = rows.map((row) => MovieIndex.stableKeyOfRow(row));
   const titleToRow = new Map();
   for (let at = 0; at < titles.length; at += 1) titleToRow.set(titles[at], at);
-  const order = indices
+  const order = keys
     .map((_, at) => ({ at, views: rows[at].voteCount }))
     .sort((a, b) => b.views - a.views);
   const picked = order.slice(0, head || order.length);
   return {
     lang,
     titleToRow,
-    entries: picked.map(({ at }) => ({ index: at, title: titles[at], views: rows[at].voteCount })),
+    keys,
+    entries: picked.map(({ at }) => ({
+      stableId: keys[at], rowIndex: at, title: titles[at], views: rows[at].voteCount,
+    })),
     rowCount: index.rowCount,
   };
 }
@@ -85,7 +96,7 @@ async function openBand(lang, head) {
 function rowFor(band, title) {
   if (!title) return null;
   const at = band.titleToRow.get(title);
-  return at == null ? null : { index: at, title };
+  return at == null ? null : { stableId: band.keys[at], rowIndex: at, title };
 }
 
 /// Ask Wikidata for a chunk of articles: their item, and that item's article in every wiki we ship.
@@ -128,14 +139,17 @@ const pageTitle = (url) => decodeURIComponent(url.slice(url.lastIndexOf("/") + 1
 function writeGroups(outDir, bands, groups) {
   for (const band of bands) {
     const byRow = [];
+    const byGroup = [];
     for (const [groupId, members] of groups) {
       const member = members.get(band.lang);
-      if (member) byRow.push({ rowIndex: member.index, groupId });
+      if (!member) continue;
+      byRow.push({ stableId: member.stableId, groupId });
+      byGroup.push({ groupId, rowIndex: member.rowIndex });
     }
-    byRow.sort((a, b) => a.rowIndex - b.rowIndex);
-    const byGroup = byRow.map(({ rowIndex, groupId }) => ({ groupId, rowIndex })).sort((a, b) => a.groupId - b.groupId);
+    byRow.sort((a, b) => a.stableId - b.stableId);
+    byGroup.sort((a, b) => a.groupId - b.groupId);
 
-    // Header: "TCWG0001" | u32 languages | u32 byRowCount | u32 byGroupCount — the shape `openGroups`
+    // Header: "TCWG0002" | u32 languages | u32 byRowCount | u32 byGroupCount — the shape `openGroups`
     // reads, so the writer and the reader cannot drift.
     const bytes = Buffer.alloc(20 + byRow.length * 8 + byGroup.length * 8);
     bytes.write(GROUP_MAGIC, 0, "utf8");
@@ -143,8 +157,8 @@ function writeGroups(outDir, bands, groups) {
     bytes.writeUInt32LE(byRow.length, 12);
     bytes.writeUInt32LE(byGroup.length, 16);
     let at = 20;
-    for (const { rowIndex, groupId } of byRow) {
-      bytes.writeUInt32LE(rowIndex, at);
+    for (const { stableId, groupId } of byRow) {
+      bytes.writeUInt32LE(stableId, at);
       bytes.writeUInt32LE(groupId, at + 4);
       at += 8;
     }
@@ -207,7 +221,7 @@ async function main() {
           if (!title) continue;
           const otherBand = bands.get(other);
           if (other === lang && title === entry.title) {
-            members.set(other, { index: entry.index, title: entry.title });
+            members.set(other, { stableId: entry.stableId, rowIndex: entry.rowIndex, title: entry.title });
             continue;
           }
           const found = rowFor(otherBand, title);
@@ -250,7 +264,7 @@ async function main() {
 
   if (write) {
     const outDir = resolve(root, "build");
-    // `rowFor` sees the whole band; a member's index is therefore already its shipped row index.
+    // `rowFor` sees the whole band, so a member's stable id and base row are already the shipped row's.
     writeGroups(outDir, [...bands.values()], grouped);
     // A manifest records the map's bytes and hash, so a map shipped without its manifest is a client
     // that fails its check. Refreshing both here is what makes one command enough — the order matters,
