@@ -106,7 +106,9 @@ for (const lang of only ? [only] : LANGUAGES) {
       break;
     }
     for (const row of bindings) {
-      found.set(pageTitle(row.page.value), Number(row.item.value.slice(1)));
+      // The binding is the entity URI, not a bare Q-id, so the number is what is left after every
+      // non-digit: slicing the first character off yields NaN, which JSON writes as null.
+      found.set(pageTitle(row.page.value), Number(row.item.value.replace(/\D/g, "")));
     }
     let lines = "";
     for (const title of slice) {
