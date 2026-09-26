@@ -73,7 +73,9 @@ jobs:
       # Bounded per run: the first pass over a band is thousands of requests, and every run after it is
       # the handful of new articles. A title with no key yet falls back to one derived from its title.
       - name: Resolve Wikidata keys
-        run: node --max-old-space-size=8192 Scripts/fetch-wiki-keys.mjs --delay 500 --limit=300000
+        # The script paces itself: a thousand titles a query, a query every four seconds, which is what
+        # keeps a long run inside the endpoint's per-minute query-time budget.
+        run: node --max-old-space-size=8192 Scripts/fetch-wiki-keys.mjs --limit=300000
 
       - name: Decide delta vs base
         id: mode
