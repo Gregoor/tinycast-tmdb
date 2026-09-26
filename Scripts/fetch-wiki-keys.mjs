@@ -7,7 +7,7 @@
 // item is stable, comes from one batched lookup per thousand articles, and is the same id every wiki
 // agrees on — which is also what cross-wiki grouping would key on.
 //
-//   node --max-old-space-size=8192 Scripts/fetch-wiki-keys.mjs [--lang=en] [--chunk=1000] [--delay=500]
+//   node --max-old-space-size=8192 Scripts/fetch-wiki-keys.mjs [--lang=en] [--chunk=1000] [--delay=4000]
 //                                                              [--limit=100000]
 //
 // Keys are kept per language, so a rerun only asks about titles it has not seen: the first pass over a
@@ -29,7 +29,10 @@ const argument = (name, fallback) => {
 
 const only = argument("lang", null);
 const chunk = Number(argument("chunk", 1000));
-const delay = Number(argument("delay", 500));
+// The endpoint budgets query time per minute, and one query here is a thousand titles: pacing by the
+// chunk rather than by the request is what keeps a long run inside it, since a thousand titles cost the
+// same whether they arrive every four seconds or every half.
+const delay = Number(argument("delay", 4000));
 const limit = Number(argument("limit", Number.MAX_SAFE_INTEGER));
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -59,7 +62,11 @@ async function queryItems(urls, attempt = 0) {
       signal: AbortSignal.timeout(90_000),
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    return (await response.json()).results.bindings;
+    const bindings = (await response.json()).results.bindings;
+    // The endpoint answers an over-quota query with no rows rather than an error, and every chunk holds
+    // titles that do have items: reading that as "no item" would record them as unkeyable for good.
+    if (bindings.length === 0) throw new Error("the endpoint returned no rows");
+    return bindings;
   } catch (error) {
     if (attempt >= 4) throw error;
     await sleep(1000 * 2 ** attempt);
