@@ -70,12 +70,20 @@ jobs:
             --date="$DAY" --min-views=1 --keep=1000000 --out=data/wikipedia/views.ndjson
           node Scripts/fetch-wikipedia.mjs --min-views=1
 
-      # Bounded per run: the first pass over a band is thousands of requests, and every run after it is
-      # the handful of new articles. A title with no key yet falls back to one derived from its title.
+      # Bounded per run, with the store cached between runs, so a band is keyed over a few days rather than
+      # in one go: a million keys is millions of requests. A title with no key yet falls back to one derived
+      # from its title, which is a valid identity, just not one another wiki shares.
+      #
+      # The script paces itself: a thousand titles a query, a query every four seconds, which is what keeps
+      # a long run inside the endpoint's per-minute query-time budget.
       - name: Resolve Wikidata keys
-        # The script paces itself: a thousand titles a query, a query every four seconds, which is what
-        # keeps a long run inside the endpoint's per-minute query-time budget.
-        run: node --max-old-space-size=8192 Scripts/fetch-wiki-keys.mjs --limit=300000
+        run: node --max-old-space-size=8192 Scripts/fetch-wiki-keys.mjs --limit=600000
+
+      # The fold above runs before these keys exist, and a row's key decides its id, so this second pass is
+      # what moves them into the store the build reads. The fold is incremental and a row whose id moved is
+      # a changed row, so only the keyed rows are rewritten, each recording the id it used to have.
+      - name: Fold the resolved keys in
+        run: node Scripts/fetch-wikipedia.mjs --min-views=1
 
       - name: Decide delta vs base
         id: mode
