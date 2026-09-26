@@ -42,9 +42,6 @@ export async function searchMovies(indexes, query, { limit = 10, candidatePool =
       entries.push({
         key,
         index: i,
-        // The row within its own index: its position there, not the stable id the cross-language map
-        // is keyed by. `index` alone is only the position in the base/delta list.
-        row: candidates[k],
         rec,
         title,
         originalTitle,
@@ -72,11 +69,9 @@ export async function searchMovies(indexes, query, { limit = 10, candidatePool =
   return [...best.values()]
     .sort((a, b) => b.score - a.score)
     .slice(0, limit)
-    .map(({ rec, row, title, originalTitle, posterURL, score, matchedOriginal }) => ({
+    .map(({ rec, title, originalTitle, posterURL, score, matchedOriginal }) => ({
       // Stable identity for frecency + activation: `<mediaType>:<tmdbID>`.
       id: `${rec.mediaType === 1 ? "tv" : "movie"}:${rec.tmdbID}`,
-      // The row within this language's index, which is what the cross-language map is keyed by.
-      row,
       tmdbID: rec.tmdbID,
       imdbID: rec.imdbNum ? `tt${String(rec.imdbNum).padStart(7, "0")}` : null,
       title,
